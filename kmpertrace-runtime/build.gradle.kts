@@ -85,6 +85,12 @@ android {
     }
 }
 
+// Work around Kotlin/Native test runner instability with TeamCity service messages on iOS simulators.
+// Without this, occasional segfaults/“Received output for test that is not running” can surface on fresh daemons/CI.
+tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest>().configureEach {
+    environment("KOTLIN_NATIVE_IGNORE_SERVICE_MESSAGES", "true")
+}
+
 mavenPublishing {
     coordinates(kmpertraceGroup, "kmpertrace-runtime", kmpertraceVersion)
     publishToMavenCentral()

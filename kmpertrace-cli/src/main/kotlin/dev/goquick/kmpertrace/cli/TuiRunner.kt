@@ -43,8 +43,9 @@ internal class TuiRunner(
         val minLevelState = java.util.concurrent.atomic.AtomicReference(filters.minLevel)
         val showRaw = java.util.concurrent.atomic.AtomicBoolean(rawLogsLevel != RawLogLevel.OFF)
         val rawLevelState = java.util.concurrent.atomic.AtomicReference(rawLogsLevel)
-    val rawLines = ArrayDeque<dev.goquick.kmpertrace.parse.ParsedEvent>()
+        val rawLines = ArrayDeque<dev.goquick.kmpertrace.parse.ParsedEvent>()
         var lastWidth: Int? = if (autoWidth) terminal.updateSize().width.takeIf { it > 0 } else maxLineWidth
+        val androidGrouper = AndroidMultilineGrouper()
 
         fun startKeyListener() {
             inputRawMode.set(enableRawMode())
@@ -170,7 +171,15 @@ internal class TuiRunner(
                 resolved
             } else maxLineWidth
             val snapshot = applySearchFilter(engine.snapshot(), searchTerm.get())
-        val rawList = if (showRaw.get()) rawLines.filter { rawLevelAllows(it, rawLevelState.get()) } else emptyList()
+        val rawList = if (showRaw.get()) {
+            val term = searchTerm.get()
+            val predicate = filters.predicate()
+            rawLines.filter { evt ->
+                rawLevelAllows(evt, rawLevelState.get()) &&
+                        predicate(evt) &&
+                        (term.isNullOrBlank() || matchesEvent(evt, term.trim()))
+            }
+        } else emptyList()
             val rendered = renderTraces(snapshot.traces, snapshot.untraced + rawList, showSource, wrapWidth, colorize, timeFormat)
             clearScreenAndScrollback()
             if (rendered.isBlank()) {
@@ -201,6 +210,38 @@ internal class TuiRunner(
         }
 
         renderIfDue(force = true)
+
+        fun handleLine(line: String) {
+            val openStructured = hasOpenStructured(pendingLines)
+            // Fast-path: if this single line looks complete and parses as structured, send to engine directly.
+            if (!openStructured && line.contains("|{") && line.trimEnd().endsWith("}|")) {
+                engine.onLine(line)
+                renderIfDue(force = true)
+                return
+            }
+            // Otherwise, only collect raw when it does not parse as structured (avoids KmperTrace leakage).
+            if (!openStructured && !line.contains("|{") && dev.goquick.kmpertrace.parse.parseLine(line) == null) {
+                rawEventFromLine(line, RawLogLevel.ALL)?.let { evt ->
+                    rawLines += evt
+                    while (rawLines.size > maxEvents) rawLines.removeFirst()
+                }
+            }
+            if (pendingLines.isNotEmpty()) pendingLines.append('\n')
+            pendingLines.append(line)
+
+            val buffered = pendingLines.toString()
+            val lastOpen = buffered.lastIndexOf("|{")
+            val lastClose = buffered.lastIndexOf("}|")
+            if (lastOpen != -1 && lastClose != -1 && lastClose > lastOpen) {
+                // Preserve the human prefix by passing the full buffered chunk up to the close marker.
+                val candidate = buffered.substring(0, lastClose + 2)
+                pendingLines.clear()
+                engine.onLine(candidate)
+                renderIfDue(force = true)
+            } else if (pendingLines.length > 50_000) {
+                pendingLines.clear()
+            }
+        }
 
         reader.use { r ->
             while (running.get()) {
@@ -235,37 +276,13 @@ internal class TuiRunner(
                     continue
                 }
                 val line = r.readLine() ?: break
-                val openStructured = hasOpenStructured(pendingLines)
-                // Fast-path: if this single line looks complete and parses as structured, send to engine directly.
-                if (!openStructured && line.contains("|{") && line.trimEnd().endsWith("}|")) {
-                    engine.onLine(line)
-                    renderIfDue(force = true)
-                    continue
-                }
-                // Otherwise, only collect raw when it does not parse as structured (avoids KmperTrace leakage).
-                if (!openStructured && !line.contains("|{") && dev.goquick.kmpertrace.parse.parseLine(line) == null) {
-                    rawEventFromLine(line, RawLogLevel.ALL)?.let { evt ->
-                        rawLines += evt
-                        while (rawLines.size > maxEvents) rawLines.removeFirst()
-                    }
-                }
-                if (pendingLines.isNotEmpty()) pendingLines.append('\n')
-                pendingLines.append(line)
-
-                val buffered = pendingLines.toString()
-                val lastOpen = buffered.lastIndexOf("|{")
-                val lastClose = buffered.lastIndexOf("}|")
-                if (lastOpen != -1 && lastClose != -1 && lastClose > lastOpen) {
-                    // Preserve the human prefix by passing the full buffered chunk up to the close marker.
-                    val candidate = buffered.substring(0, lastClose + 2)
-                    pendingLines.clear()
-                    engine.onLine(candidate)
-                    renderIfDue(force = true)
-                } else if (pendingLines.length > 50_000) {
-                    pendingLines.clear()
+                androidGrouper.feed(line).forEach { collapsed ->
+                    handleLine(collapsed)
                 }
             }
         }
+
+        androidGrouper.flush().forEach { handleLine(it) }
 
         renderIfDue(force = true)
         val finalSnapshot = engine.snapshot()
@@ -328,7 +345,7 @@ private fun buildStatusLine(
     if (snapshot.droppedCount > 0) parts += "dropped=${snapshot.droppedCount}/${maxEvents}"
     val filterSummary = filters.describe()
     if (filterSummary.isNotBlank()) parts += "filters=$filterSummary"
-    search?.takeIf { it.isNotBlank() }?.let { parts += "search=\"$it\"" }
+    search?.takeIf { it.isNotBlank() }?.let { parts += "filter=\"$it\"" }
     // raw toggle info is handled separately in runner (printed after render)
     parts += "[?] help"
     parts += "[/] filter"
@@ -370,7 +387,7 @@ private fun promptForSearch(rawEnabled: java.util.concurrent.atomic.AtomicBoolea
         disableRawMode()
         rawEnabled.set(false)
     }
-    print("search (empty to clear): ")
+    print("enter filter term (empty to clear): ")
     System.out.flush()
     val line = readLine()
     println()
@@ -412,7 +429,7 @@ private fun hasOpenStructured(buffer: StringBuilder): Boolean {
     return open != -1 && open > close
 }
 
-private fun rawLevelAllows(evt: dev.goquick.kmpertrace.parse.ParsedEvent, min: RawLogLevel): Boolean {
+internal fun rawLevelAllows(evt: dev.goquick.kmpertrace.parse.ParsedEvent, min: RawLogLevel): Boolean {
     if (min == RawLogLevel.OFF) return false
     val lvlStr = evt.rawFields["lvl"]?.uppercase() ?: "ALL"
     val actual = runCatching { RawLogLevel.valueOf(lvlStr) }.getOrDefault(RawLogLevel.ALL)

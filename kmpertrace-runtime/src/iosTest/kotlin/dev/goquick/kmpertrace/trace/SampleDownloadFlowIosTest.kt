@@ -6,13 +6,12 @@ import dev.goquick.kmpertrace.log.Log
 import dev.goquick.kmpertrace.log.LoggerConfig
 import dev.goquick.kmpertrace.log.LogBackend
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlin.concurrent.AtomicReference
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -40,28 +39,24 @@ class SampleDownloadFlowIosTest {
         backend.events.clear()
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun download_spans_bind_logs_and_differentiate_traces() = runBlocking {
         LoggerConfig.backends = listOf(backend)
         val downloader = TestDownloader()
 
         withTimeout(5_000) {
-            val bJobRef = AtomicReference<Job?>(null)
-            val a = launch(Dispatchers.Default) {
-                runCatching {
-                    downloader.download(label = "DownloadA", totalChunks = 3, failAtPercent = 66) { percent ->
-                        if (percent >= 33 && bJobRef.value == null) {
-                            val b = launch(Dispatchers.Default) { downloader.download(label = "DownloadB", totalChunks = 3, failAtPercent = null) }
-                            bJobRef.compareAndSet(null, b)
-                        }
-                    }
+            // Run two downloads concurrently (A may fail, B should succeed) to verify trace isolation.
+            val dispatcher = Dispatchers.Default.limitedParallelism(2)
+            coroutineScope {
+                val a = async(dispatcher) {
+                    runCatching { downloader.download(label = "DownloadA", totalChunks = 3, failAtPercent = 66) }
                 }
-            }
-            val bJob = bJobRef.value
-            if (bJob != null) {
-                joinAll(a, bJob)
-            } else {
-                a.join()
+                val b = async(dispatcher) {
+                    downloader.download(label = "DownloadB", totalChunks = 3, failAtPercent = null)
+                }
+                a.await()
+                b.await()
             }
         }
 

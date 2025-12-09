@@ -151,7 +151,7 @@ private fun renderSpan(
     timeFormat: TimeFormat
 ) {
     val connector = if (isLast) "└─" else "├─"
-    val durationPart = span.durationMs?.let { " (${it} ms)" } ?: " (unknown ms)"
+    val durationPart = span.durationMs?.let { " (${it} ms)" } ?: ""
     val spanSourceHint = if (showSource) buildSourceHint(span.sourceComponent, span.sourceOperation, span.sourceLocationHint) else null
     val spanHasError = span.events.any { it.eventKind == EventKind.SPAN_END && (it.rawFields["status"] == "ERROR" || it.rawFields["throwable"] != null) }
     val spanPrefix = prefix + connector + ' '

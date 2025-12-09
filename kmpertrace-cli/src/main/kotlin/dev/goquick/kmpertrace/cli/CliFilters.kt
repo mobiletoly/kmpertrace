@@ -72,7 +72,7 @@ private fun matchesSpan(span: SpanNode, term: String): Boolean =
             containsTerm(span.sourceFile, term) ||
             containsTerm(span.sourceFunction, term)
 
-private fun matchesEvent(evt: ParsedEvent, term: String): Boolean =
+internal fun matchesEvent(evt: ParsedEvent, term: String): Boolean =
     containsTerm(evt.message, term) ||
             containsTerm(evt.loggerName, term) ||
             containsTerm(evt.sourceComponent, term) ||

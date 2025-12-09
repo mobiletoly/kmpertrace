@@ -167,6 +167,41 @@ suspend inline fun <reified TComponent, T> traceSpanForClass(
     block = block
 )
 
+/**
+ * Create a child span in the current trace without suspending. Emits SPAN_START/END around [block].
+ * Useful for synchronous code that still wants a nested span node.
+ */
+fun <T> inlineSpan(
+    component: String,
+    operation: String,
+    attributes: Map<String, String> = emptyMap(),
+    block: () -> T
+): T {
+    val parent = TraceContextStorage.get()
+    val ctx = TraceContext(
+        traceId = parent?.traceId ?: generateTraceId(),
+        spanId = generateSpanId(),
+        parentSpanId = parent?.spanId,
+        spanName = "$component.$operation",
+        sourceComponent = component,
+        sourceOperation = operation,
+        sourceLocationHint = "$component.$operation",
+        attributes = attributes
+    )
+    val startInstant = Clock.System.now()
+    emitSpanStart(ctx, SpanKind.INTERNAL)
+    val prevBinding = LoggingBindingStorage.get()
+    TraceContextStorage.set(ctx)
+    LoggingBindingStorage.set(LoggingBinding.BindToSpan)
+    return try {
+        block()
+    } finally {
+        emitSpanEnd(ctx, startInstant, null)
+        TraceContextStorage.set(parent)
+        LoggingBindingStorage.set(prevBinding)
+    }
+}
+
 private fun emitSpanStart(context: TraceContext, kind: SpanKind) {
     val now = Clock.System.now()
     val defaultMsg = defaultSpanMessage(EventKind.SPAN_START, context.spanName)

@@ -74,10 +74,13 @@ reconstructed from plain log output.*
    Somewhere in your app initialization (per process):
 
    ```kotlin
-   KmperTrace.configure {
-       serviceName = "sample-app"
-       environment = "dev"
-       addDefaultPlatformBackends()
+   fun App() {
+        LaunchedEffect(Unit) { 
+            KmperTrace.configure(
+                minLevel = Level.DEBUG,
+                serviceName = "sample-app",
+            )
+        }
    }
    ```
 
@@ -85,13 +88,13 @@ reconstructed from plain log output.*
 
    ```kotlin
    suspend fun refreshAll() = traceSpan(component = "ProfileViewModel", operation = "refreshAll") {
-       Log.forComponent("ProfileViewModel").i { "Refreshing profile..." }
+       Log.i { "Refreshing profile..." }
 
        repository.loadProfile()
        repository.loadContacts()
        repository.loadActivity()
 
-       Log.forComponent("ProfileViewModel").i { "Refresh complete" }
+       Log.i { "Refresh complete" }
    }
    ```
 
@@ -99,7 +102,7 @@ reconstructed from plain log output.*
    the tree.
 
 
-4. **Run your app and collect logs for Android**
+4. **Run your app and collect logs for Android (non-interactive mode)**
 
    Run the app as usual; KmperTrace will emit structured log lines to the platform backend (Logcat,
    NSLog, stdout, etc.).
@@ -116,9 +119,10 @@ reconstructed from plain log output.*
    **Or** (this is what I usually do) just copy/paste to file from Android Studio's Logcat view.
 
 
-5. **Visualize with the CLI**
+5. **Visualize with the CLI (non-interactive mode)**
 
-   Clone the repo and build the binary for the CLI:
+   Clone the repo and build the binary for the CLI (need for both interactive and non-interactive
+   modes):
 
    ```bash
    git clone https://github.com/mobiletoly/kmpertrace.git
@@ -145,7 +149,7 @@ reconstructed from plain log output.*
    You'll see per‑trace trees similar to the screenshot from the beginning of this README, with
    spans, durations, log lines, and error stack traces.
 
-   <br>**CLI interactive mode**
+6. **Visualize with the CLI (interactive mode)**
 
    We have experimental interactive mode in kmpertrace-cli. E.g. to run it for adb events you can
    run:
@@ -153,6 +157,13 @@ reconstructed from plain log output.*
    ```bash
    ./kmpertrace-cli/build/install/kmpertrace-cli/bin/kmpertrace-cli tui --source adb \
       --adb-pkg dev.goquick.kmpertrace.sampleapp
+   ```
+
+   or for iOS:
+
+   ```bash
+   ./kmpertrace-cli/build/install/kmpertrace-cli/bin/kmpertrace-cli tui --source ios \
+      --ios-proc SampleApp
    ```
 
    This tool was tested on MacOS and Linux. Non-interactive print mode (or piping logs into tui

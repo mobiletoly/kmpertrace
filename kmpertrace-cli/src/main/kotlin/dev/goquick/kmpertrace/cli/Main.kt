@@ -328,7 +328,7 @@ private fun ingestLines(
     val engine = AnalysisEngine(filterState = filters, maxEvents = maxEvents)
     val raw = mutableListOf<ParsedEvent>()
     val pending = StringBuilder()
-    lines.forEach { line ->
+    collapseAndroidMultiline(lines).forEach { line ->
         val openStructured = hasOpenStructured(pending)
         if (rawLevel != RawLogLevel.OFF && !openStructured && !line.contains("|{")) {
             rawEventFromLine(line, rawLevel)?.let { raw += it }

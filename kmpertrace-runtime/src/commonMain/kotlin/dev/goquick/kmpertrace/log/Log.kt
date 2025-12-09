@@ -7,6 +7,8 @@ import dev.goquick.kmpertrace.core.TraceContext
 import dev.goquick.kmpertrace.trace.LoggingBinding
 import dev.goquick.kmpertrace.trace.LoggingBindingStorage
 import dev.goquick.kmpertrace.trace.TraceContextStorage
+import dev.goquick.kmpertrace.trace.traceSpan
+import dev.goquick.kmpertrace.trace.inlineSpan
 import kotlin.time.Clock
 
 /**
@@ -76,6 +78,25 @@ interface LogContext {
         Log.logInternal(Level.ASSERT, null, throwable, message, component, operation, buildLocationHint(component, operation))
     }
 }
+
+/**
+ * Run [block] inside a span named by this logger's component and the provided [operation].
+ * The span is created via [traceSpan] and log calls inside the block inherit trace/span IDs; the log context's operation
+ * is set once for the duration of the block.
+ */
+suspend inline fun <T> LogContext.span(operation: String, crossinline block: suspend LogContext.() -> T): T =
+    traceSpan(component = component ?: defaultLoggerName(), operation = operation) {
+        withOperation(operation).block()
+    }
+
+/**
+ * Run [block] inside a lightweight child span (inline span) using the current trace/span, without requiring suspend.
+ * Useful for synchronous code that still wants a nested span node.
+ */
+inline fun <T> LogContext.inlineSpan(operation: String, crossinline block: LogContext.() -> T): T =
+    inlineSpan(component = component ?: defaultLoggerName(), operation = operation) {
+        withOperation(operation).block()
+    }
 
 /**
  * Static logger utility for emitting structured KmperTrace events.
@@ -197,7 +218,7 @@ object Log {
 }
 
 @PublishedApi
-internal inline fun isLoggable(level: Level): Boolean {
+internal fun isLoggable(level: Level): Boolean {
     val min = LoggerConfig.minLevel
     return level.ordinal >= min.ordinal
 }
