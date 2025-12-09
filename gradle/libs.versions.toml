@@ -1,0 +1,33 @@
+[versions]
+agp = "8.13.1"
+kotlin = "2.2.21"
+compose = "1.9.3"
+androidx-activity-compose = "1.12.1"
+androidx-lifecycle = "2.10.0"
+kotlinx-coroutines = "1.10.2"
+kotlinx-datetime = "0.7.1"
+kotlinx-coroutines-test = "1.10.2"
+clikt = "5.0.3"
+
+androidMinSdk = "26"
+androidCompileSdk = "36"
+androidTargetSdk = "36"
+mordantJvm = "3.0.2"
+
+[libraries]
+androidxActivityCompose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
+androidxLifecycleViewmodelCompose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
+androidxLifecycleRuntimeCompose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
+kotlinxCoroutinesSwing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
+kotlinxCoroutinesCore = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinxCoroutinesTest = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines-test" }
+kotlinxDatetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
+clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
+mordantJvm = { module = "com.github.ajalt.mordant:mordant-jvm", version.ref = "mordantJvm" }
+
+[plugins]
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+androidLibrary = { id = "com.android.library", version.ref = "agp" }
+composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

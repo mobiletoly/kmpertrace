@@ -1,0 +1,49 @@
+# Build system artifacts
+.gradle/
+**/build/
+**/out/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local environment overrides
+local.properties
+*.log
+
+# IDE files
+.idea/
+.kotlin/
+.konan/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Eclipse / NetBeans leftovers
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# macOS
+.DS_Store
+
+# Xcode / iOS host artifacts
+**/*.xcworkspacedata
+**/*.xcuserstate
+**/*.xcuserdatad/
+**/*.xcworkspace/xcuserdata/
+**/*.xcodeproj/project.xcworkspace/xcuserdata/
+sample-app/iosApp/DerivedData/
+sample-app/iosApp/Frameworks/
+
+/AGENTS.md
+/docs/AGENT-BOOTSTRAP.md
+/docs/TUI-Plan.md

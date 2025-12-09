@@ -1,0 +1,42 @@
+name: Publish
+
+on:
+  release:
+    types: [released, prereleased]
+
+jobs:
+  publish:
+    name: Release build and publish
+    runs-on: macOS-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: 17
+
+      - name: Verify PGP key can be read (no output on success)
+        shell: bash
+        env:
+          KEY: ${{ secrets.SIGNING_KEY }}
+          PASS: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          printf "%s\n" "$KEY" > "$tmpdir/key.asc"
+          gpg --batch --quiet --import "$tmpdir/key.asc"
+          printf 'ok' | gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "$PASS" --clearsign >/dev/null
+
+      - name: Publish to Maven Central
+        run: ./gradlew :kmpertrace-runtime:publishToMavenCentral :kmpertrace-parse:publishToMavenCentral :kmpertrace-analysis:publishToMavenCentral --no-configuration-cache
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
