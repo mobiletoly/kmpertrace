@@ -48,4 +48,4 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       - name: Build XCFramework
-        run: ./gradlew :kmpertrace-runtime:assembleXCFramework
+        run: ./gradlew :kmpertrace-runtime:assembleKmperTraceRuntimeReleaseXCFramework
