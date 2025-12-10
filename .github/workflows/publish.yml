@@ -34,7 +34,7 @@ jobs:
             --passphrase "$PASS" --clearsign >/dev/null
 
       - name: Publish to Maven Central
-        run: ./gradlew :kmpertrace-runtime:publishToMavenCentral :kmpertrace-parse:publishToMavenCentral :kmpertrace-analysis:publishToMavenCentral --no-configuration-cache
+        run: ./gradlew :kmpertrace-runtime:publishToMavenCentral --no-configuration-cache
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
