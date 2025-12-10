@@ -87,8 +87,14 @@ fun buildTraces(events: List<ParsedEvent>): List<TraceTree> {
         .forEach { (traceId, traceEvents) ->
             val spanBuilders = linkedMapOf<String, SpanBuilder>()
 
-            traceEvents.forEach { event ->
+            traceEvents.forEachIndexed { idx, event ->
                 val builder = spanBuilders.getOrPut(event.spanId) { SpanBuilder() }
+                if (builder.firstSeenIndex == null) builder.firstSeenIndex = idx
+                if (event.timestamp != null) {
+                    if (builder.startTimestamp == null || event.eventKind == EventKind.SPAN_START) {
+                        builder.startTimestamp = event.timestamp
+                    }
+                }
                 if (builder.parentSpanId == null && event.parentSpanId != null) {
                     builder.parentSpanId = event.parentSpanId
                 }
@@ -120,13 +126,15 @@ fun buildTraces(events: List<ParsedEvent>): List<TraceTree> {
                     parentSpanId = b.parentSpanId,
                     spanName = b.spanName ?: spanId,
                     durationMs = b.durationMs,
+                    startTimestamp = b.startTimestamp,
                     sourceComponent = b.sourceComponent,
                     sourceOperation = b.sourceOperation,
                     sourceLocationHint = b.sourceLocationHint,
                     sourceFile = b.sourceFile,
                     sourceLine = b.sourceLine,
                     sourceFunction = b.sourceFunction,
-                    events = b.logs.toList()
+                    events = b.logs.toList(),
+                    firstSeenIndex = b.firstSeenIndex ?: Int.MAX_VALUE
                 )
             }
 
@@ -145,6 +153,8 @@ fun buildTraces(events: List<ParsedEvent>): List<TraceTree> {
                 }
             }
 
+            roots.sortWith(spanOrderComparator)
+            roots.forEach { sortChildren(it) }
             traces += TraceTree(
                 traceId = traceId,
                 spans = roots.map { it.toSpanNode() }
@@ -186,6 +196,8 @@ private data class SpanBuilder(
     var sourceFile: String? = null,
     var sourceLine: Int? = null,
     var sourceFunction: String? = null,
+    var firstSeenIndex: Int? = null,
+    var startTimestamp: String? = null,
     val logs: MutableList<ParsedEvent> = mutableListOf()
 )
 
@@ -194,6 +206,7 @@ private class MutableSpanNode(
     val parentSpanId: String?,
     val spanName: String,
     val durationMs: Long?,
+    val startTimestamp: String?,
     val sourceComponent: String?,
     val sourceOperation: String?,
     val sourceLocationHint: String?,
@@ -201,6 +214,7 @@ private class MutableSpanNode(
     val sourceLine: Int?,
     val sourceFunction: String?,
     val events: List<ParsedEvent>,
+    val firstSeenIndex: Int,
     val children: MutableList<MutableSpanNode> = mutableListOf()
 ) {
     fun toSpanNode(): SpanNode = SpanNode(
@@ -208,6 +222,7 @@ private class MutableSpanNode(
         parentSpanId = parentSpanId,
         spanName = spanName,
         durationMs = durationMs,
+        startTimestamp = startTimestamp,
         sourceComponent = sourceComponent,
         sourceOperation = sourceOperation,
         sourceLocationHint = sourceLocationHint,
@@ -217,6 +232,18 @@ private class MutableSpanNode(
         events = events,
         children = children.map { it.toSpanNode() }
     )
+}
+
+private val spanOrderComparator = compareBy<MutableSpanNode>(
+    { it.startTimestamp == null },
+    { it.startTimestamp },
+    { it.firstSeenIndex },
+    { it.spanId }
+)
+
+private fun sortChildren(node: MutableSpanNode) {
+    node.children.sortWith(spanOrderComparator)
+    node.children.forEach { sortChildren(it) }
 }
 
 private fun parseLogfmt(input: String): Map<String, String> {

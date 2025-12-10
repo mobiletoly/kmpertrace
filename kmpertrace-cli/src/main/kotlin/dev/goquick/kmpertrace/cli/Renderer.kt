@@ -173,7 +173,8 @@ private fun renderSpan(
     val items = mutableListOf<SpanRenderable>()
     span.events.forEach { items += SpanRenderable.EventItem(it) }
     span.children.forEach { child ->
-        items += SpanRenderable.ChildItem(child, child.firstTimestamp())
+        val childTs = child.startTimestamp ?: child.firstTimestamp()
+        items += SpanRenderable.ChildItem(child, childTs)
     }
     val sortedItems = items.sortedWith(compareBy<SpanRenderable> { it.timestamp == null }.thenBy { it.timestamp })
 

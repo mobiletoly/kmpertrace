@@ -42,7 +42,7 @@ fun main(args: Array<String>) = KmperTraceCli()
  */
 class KmperTraceCli : CliktCommand(name = "kmpertrace-cli") {
     init {
-        versionOption("0.1.0")
+        versionOption("0.1.1-SNAPSHOT")
     }
 
     override fun run() = Unit

@@ -196,6 +196,21 @@ IllegalStateException: Fatal network error on \"DownloadA\" at 66% (jobId=90589)
     }
 
     @Test
+    fun spans_without_logs_are_sorted_by_start_timestamp() {
+        val lines = listOf(
+            """h |{ ts=2025-01-01T00:00:00Z lvl=info log=App trace=trace-1 span=root parent=- ev=SPAN_START name="root" }|""",
+            """h |{ ts=2025-01-01T00:00:01Z lvl=info log=App trace=trace-1 span=childA parent=root ev=SPAN_START name="A" }|""",
+            """h |{ ts=2025-01-01T00:00:02Z lvl=info log=App trace=trace-1 span=childB parent=root ev=SPAN_START name="B" }|""",
+            """h |{ ts=2025-01-01T00:00:03Z lvl=info log=App trace=trace-1 span=childA parent=root ev=SPAN_END name="A" dur=10 }|""",
+            """h |{ ts=2025-01-01T00:00:04Z lvl=info log=App trace=trace-1 span=childB parent=root ev=SPAN_END name="B" dur=10 }|"""
+        )
+
+        val traces = buildTraces(parseLines(lines))
+        val root = traces.single().spans.single()
+        assertEquals(listOf("A", "B"), root.children.map { it.spanName })
+    }
+
+    @Test
     fun ignores_lines_where_structured_suffix_missing() {
         val line = "just text with }| but no structured suffix"
         assertNull(parseLine(line))
