@@ -20,11 +20,14 @@ internal class AndroidMultilineGrouper {
 
     private var currentKey: Key? = null
     private var buffer: StringBuilder? = null
+    private var bufferHasStructured: Boolean = false
 
     /**
      * Feed a new line. Zero or more collapsed lines may be emitted.
      */
     fun feed(line: String): List<String> {
+        val structuredSuffix = line.contains("|{")
+
         val match = epochRegex.find(line)
         if (match == null) {
             return flushCurrent().plus(line)
@@ -39,9 +42,28 @@ internal class AndroidMultilineGrouper {
         )
         val messagePart = match.groupValues[6]
 
+        if (structuredSuffix) {
+            // If we were collecting a multi-line message without the suffix yet, finalize it with this suffix.
+            if (currentKey != null && key == currentKey && !bufferHasStructured) {
+                buffer!!.append('\n').append(messagePart)
+                val emitted = buildCurrent()
+                reset()
+                return listOf(emitted)
+            }
+            // Otherwise, flush any previous message and emit this line on its own.
+            val flushed = flushCurrent()
+            currentKey = key
+            buffer = StringBuilder(messagePart)
+            bufferHasStructured = true
+            val emitted = buildCurrent()
+            reset()
+            return flushed + emitted
+        }
+
         if (currentKey == null) {
             currentKey = key
             buffer = StringBuilder(messagePart)
+            bufferHasStructured = false
             return emptyList()
         }
 
@@ -52,6 +74,7 @@ internal class AndroidMultilineGrouper {
             val emitted = buildCurrent()
             currentKey = key
             buffer = StringBuilder(messagePart)
+            bufferHasStructured = false
             listOf(emitted)
         }
     }
@@ -63,8 +86,7 @@ internal class AndroidMultilineGrouper {
 
     private fun flushCurrent(): List<String> {
         val emitted = currentKey?.let { listOf(buildCurrent()) } ?: emptyList()
-        currentKey = null
-        buffer = null
+        reset()
         return emitted
     }
 
@@ -72,6 +94,12 @@ internal class AndroidMultilineGrouper {
         val key = currentKey ?: return ""
         val msg = buffer?.toString().orEmpty()
         return "${key.ts} ${key.pid} ${key.tid} ${key.level} ${key.tag}: $msg"
+    }
+
+    private fun reset() {
+        currentKey = null
+        buffer = null
+        bufferHasStructured = false
     }
 }
 

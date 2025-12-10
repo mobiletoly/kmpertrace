@@ -38,4 +38,15 @@ class AndroidMultilineGrouperTest {
         assertTrue(collapsed[0].contains("first part\nsecond part"))
         assertTrue(collapsed[1].contains("TagTwo"))
     }
+
+    @Test
+    fun `structured lines are not coalesced`() {
+        val lines = sequenceOf(
+            " 1765253114.749 17097 17144 D AppRootView: message one |{ ts=2025-12-09T22:19:52.747Z lvl=debug head=\"one\" log=AppRootView }|",
+            " 1765253114.749 17097 17144 D AppRootView: message two |{ ts=2025-12-09T22:19:52.748Z lvl=debug head=\"two\" log=AppRootView }|"
+        )
+        val collapsed = collapseAndroidMultiline(lines).toList()
+        assertEquals(2, collapsed.size, "structured entries must remain separate")
+        assertEquals("two", parseLine(collapsed[1])?.rawFields?.get("head"))
+    }
 }
