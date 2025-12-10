@@ -53,6 +53,10 @@ reconstructed from plain log output.*
     - reconstructs span trees, and
     - renders them as a readable text UI (as shown in the screenshot above).
 
+- **Pure iOS consumer?**  
+  See `docs/IOS-XCFramework.md` for using the prebuilt XCFramework (manual drag/drop or SwiftPM
+  binary target from the release assets).
+
 ---
 
 ## Quick Start

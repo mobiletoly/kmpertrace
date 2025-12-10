@@ -10,15 +10,13 @@ import com.github.ajalt.clikt.parameters.options.validate
 import com.github.ajalt.clikt.parameters.options.versionOption
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.path
-import dev.goquick.kmpertrace.analysis.AnalysisSnapshot
 import dev.goquick.kmpertrace.analysis.AnalysisEngine
+import dev.goquick.kmpertrace.analysis.AnalysisSnapshot
 import dev.goquick.kmpertrace.analysis.FilterState
 import dev.goquick.kmpertrace.cli.ansi.AnsiMode
 import dev.goquick.kmpertrace.cli.ansi.shouldColorize
 import dev.goquick.kmpertrace.cli.source.Sources
 import dev.goquick.kmpertrace.parse.ParsedEvent
-import dev.goquick.kmpertrace.parse.buildTraces
-import dev.goquick.kmpertrace.parse.parseLine
 import java.io.BufferedReader
 import java.nio.file.Path
 
@@ -42,7 +40,7 @@ fun main(args: Array<String>) = KmperTraceCli()
  */
 class KmperTraceCli : CliktCommand(name = "kmpertrace-cli") {
     init {
-        versionOption("0.1.1-SNAPSHOT")
+        versionOption(BuildInfo.VERSION)
     }
 
     override fun run() = Unit

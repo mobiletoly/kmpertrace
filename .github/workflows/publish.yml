@@ -15,7 +15,7 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: 17
 
       - name: Verify PGP key can be read (no output on success)
@@ -40,3 +40,20 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
+
+      - name: Build XCFramework (Release)
+        run: ./gradlew :kmpertrace-runtime:assembleKmperTraceRuntimeReleaseXCFramework
+
+      - name: Zip XCFramework
+        run: |
+          cd kmpertrace-runtime/build/XCFrameworks/release
+          zip -r KmperTraceRuntime.xcframework.zip KmperTraceRuntime.xcframework
+          swift package compute-checksum KmperTraceRuntime.xcframework.zip || shasum -a 256 KmperTraceRuntime.xcframework.zip
+
+      - name: Upload XCFramework as Release asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

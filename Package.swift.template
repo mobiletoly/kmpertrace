@@ -1,0 +1,22 @@
+// swift-tools-version:5.7
+import PackageDescription
+
+let package = Package(
+    name: "KmperTraceRuntime",
+    platforms: [
+        .iOS(.v13)
+    ],
+    products: [
+        .library(
+            name: "KmperTraceRuntime",
+            targets: ["KmperTraceRuntime"]
+        )
+    ],
+    targets: [
+        .binaryTarget(
+            name: "KmperTraceRuntime",
+            url: "__URL__",
+            checksum: "__CHECKSUM__"
+        )
+    ]
+)

@@ -1,5 +1,7 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
+import java.io.ByteArrayOutputStream
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -12,6 +14,8 @@ val kmpertraceVersion: String by project
 
 @OptIn(ExperimentalWasmDsl::class)
 kotlin {
+    val xcf = XCFramework("KmperTraceRuntime")
+
     compilerOptions {
         freeCompilerArgs.addAll(
             "-Xexpect-actual-classes",
@@ -25,7 +29,7 @@ kotlin {
         }
     }
 
-    listOf(
+    val iosTargets = listOf(
         iosArm64(),
         iosSimulatorArm64()
     )
@@ -61,6 +65,14 @@ kotlin {
             implementation(kotlin("test"))
         }
     }
+
+    iosTargets.forEach { target ->
+        target.binaries.framework {
+            baseName = "KmperTraceRuntime"
+            isStatic = true
+            xcf.add(this)
+        }
+    }
 }
 
 // Ensure native frameworks export our dependencies when consumed from other KMP/iOS modules.
@@ -68,6 +80,49 @@ kotlin.targets.withType(org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarge
     binaries.withType(org.jetbrains.kotlin.gradle.plugin.mpp.Framework::class.java).all {
         export(libs.kotlinxDatetime)
         export(libs.kotlinxCoroutinesCore)
+    }
+}
+
+tasks.register("prepareSpmRelease") {
+    dependsOn("assembleKmperTraceRuntimeReleaseXCFramework")
+    group = "distribution"
+    description = "Build release XCFramework, zip it, compute checksum, and render Package.swift for SwiftPM binary distribution."
+
+    doLast {
+        val version: String by project
+        val releaseDir = layout.buildDirectory.dir("XCFrameworks/release").get()
+        val xcframeworkDir = releaseDir.dir("KmperTraceRuntime.xcframework")
+        check(xcframeworkDir.asFile.exists()) {
+            "XCFramework not found at ${xcframeworkDir.asFile}. Run assembleKmperTraceRuntimeReleaseXCFramework first."
+        }
+
+        val zipFile = releaseDir.file("KmperTraceRuntime.xcframework.zip")
+        zipFile.asFile.delete()
+        project.exec {
+            workingDir = releaseDir.asFile
+            commandLine("zip", "-r", zipFile.asFile.name, xcframeworkDir.asFile.name)
+        }
+
+        val checksumOutput = ByteArrayOutputStream()
+        project.exec {
+            workingDir = releaseDir.asFile
+            commandLine("shasum", "-a", "256", zipFile.asFile.name)
+            standardOutput = checksumOutput
+        }
+        val checksum = checksumOutput.toString().trim().split(" ").firstOrNull()
+            ?: error("Failed to parse checksum")
+
+        val template = rootProject.file("Package.swift.template").readText()
+        val url = "https://github.com/mobiletoly/kmpertrace/releases/download/v$version/KmperTraceRuntime.xcframework.zip"
+        val rendered = template
+            .replace("__URL__", url)
+            .replace("__CHECKSUM__", checksum)
+
+        rootProject.file("Package.swift").writeText(rendered)
+
+        println("[KmperTrace] Prepared Package.swift for v$version")
+        println("[KmperTrace] URL: $url")
+        println("[KmperTrace] SHA-256: $checksum")
     }
 }
 
