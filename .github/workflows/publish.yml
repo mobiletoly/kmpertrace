@@ -8,6 +8,8 @@ jobs:
   publish:
     name: Release build and publish
     runs-on: macOS-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out code
         uses: actions/checkout@v4
