@@ -57,7 +57,7 @@ jobs:
             exit 1
           fi
           mkdir -p kmpertrace-runtime/build/XCFrameworks/release
-          gh run download "$RUN_ID" --name "KmperTraceRuntime.xcframework.zip" --dir kmpertrace-runtime/build/XCFrameworks/release
+          gh run download "$RUN_ID" --name "KmperTraceRuntime.xcframework" --dir kmpertrace-runtime/build/XCFrameworks/release
           if [ ! -f kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip ]; then
             echo "Downloaded artifact not found at expected path." >&2
             ls -l kmpertrace-runtime/build/XCFrameworks/release

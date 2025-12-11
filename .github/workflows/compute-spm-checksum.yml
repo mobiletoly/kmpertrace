@@ -52,5 +52,5 @@ jobs:
       - name: Upload XCFramework zip as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: KmperTraceRuntime.xcframework.zip
+          name: KmperTraceRuntime.xcframework
           path: kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip
