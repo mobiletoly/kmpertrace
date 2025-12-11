@@ -43,6 +43,27 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
 
+      - name: Download XCFramework artifact from helper workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "Looking for compute-spm-checksum workflow run on commit $TARGET_SHA"
+          RUN_ID=$(gh run list --workflow compute-spm-checksum.yml --json databaseId,headSha,conclusion --limit 20 \
+            | jq -r --arg sha "$TARGET_SHA" '.[] | select(.headSha==$sha and .conclusion=="success") | .databaseId' | head -n1)
+          if [ -z "$RUN_ID" ]; then
+            echo "No successful compute-spm-checksum run found for commit $TARGET_SHA. Run the helper workflow on this commit before tagging a release." >&2
+            exit 1
+          fi
+          mkdir -p kmpertrace-runtime/build/XCFrameworks/release
+          gh run download "$RUN_ID" --name "KmperTraceRuntime.xcframework.zip" --dir kmpertrace-runtime/build/XCFrameworks/release
+          if [ ! -f kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip ]; then
+            echo "Downloaded artifact not found at expected path." >&2
+            ls -l kmpertrace-runtime/build/XCFrameworks/release
+            exit 1
+          fi
+
       - name: Verify XCFramework checksum matches Package.swift
         run: |
           set -euo pipefail

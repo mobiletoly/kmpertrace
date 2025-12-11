@@ -11,7 +11,7 @@ This repo publishes:
 
 2) Run helper workflow to build + checksum
    - GitHub → Actions → **Compute SPM XCFramework checksum** → Run workflow.
-   - Select the commit you just pushed (not a tag).
+   - Select the commit you just pushed (not a tag). Run it on the commit that already has the version bump.
    - CI builds the XCFramework, zips it, prints checksum and suggested URL, uploads the zip artifact.
 
 3) Update `Package.swift`
@@ -19,21 +19,18 @@ This repo publishes:
    - Edit root `Package.swift` with that URL and checksum.
    - Commit & push.
 
-4) Stage the zip for publish workflow
-   - Download the `KmperTraceRuntime.xcframework.zip` artifact from the helper run.
-   - Place it at `kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip` in the repo (so publish.yml can verify/upload it).
-
-5) Tag
+4) Tag
    - Ensure HEAD contains the updated `Package.swift`.
    - Tag the commit: `git tag v<version>`; `git push origin v<version>`.
 
-6) Create GitHub Release (manual)
+5) Create GitHub Release (manual)
    - In GitHub UI, create a release for tag `v<version>`.
 
-7) What CI does on the release event
+6) What CI does on the release event
    - publish.yml:
      - Publishes Maven artifacts.
-     - Verifies `swift package compute-checksum` on the staged zip matches `Package.swift`.
+     - Downloads the `compute-spm-checksum` artifact for the tagged commit.
+     - Verifies `swift package compute-checksum` on that zip matches `Package.swift`.
      - Uploads that exact zip to the GitHub Release (no rebuild).
      - Fails if checksum mismatches or zip is missing.
 
