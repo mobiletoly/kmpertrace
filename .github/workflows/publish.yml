@@ -1,4 +1,4 @@
-name: Publish (release)
+name: Publish (rel2)
 
 on:
   release:
@@ -80,6 +80,29 @@ jobs:
           if [ ! -f kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip ]; then
             echo "Downloaded artifact not found at expected path." >&2
             ls -l kmpertrace-runtime/build/XCFrameworks/release
+            exit 1
+          fi
+
+      - name: Verify XCFramework checksum matches Package.swift
+        run: |
+          set -euo pipefail
+          ZIP_PATH="kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip"
+          CHECKSUM=$(swift package compute-checksum "$ZIP_PATH")
+          echo "XCFramework checksum: $CHECKSUM"
+
+          MANIFEST_CHECKSUM=$(python - <<'PY'
+import re, pathlib, sys
+manifest = pathlib.Path("Package.swift").read_text()
+m = re.search(r'checksum:\s*"([^"]+)"', manifest)
+if not m:
+    sys.exit("Could not find checksum in Package.swift")
+print(m.group(1))
+PY
+)
+
+          echo "Package.swift checksum: $MANIFEST_CHECKSUM"
+          if [ "$CHECKSUM" != "$MANIFEST_CHECKSUM" ]; then
+            echo "Checksum mismatch between prebuilt zip and Package.swift. Fix Package.swift (or regenerate the zip/checksum) before tagging a release." >&2
             exit 1
           fi
 
