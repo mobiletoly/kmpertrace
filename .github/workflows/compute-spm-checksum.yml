@@ -1,0 +1,56 @@
+name: Compute SPM XCFramework checksum
+
+on:
+  workflow_dispatch:
+    inputs:
+      kmpertrace_version:
+        description: "Version hint (e.g. 0.1.6) — used only for logging a suggested URL"
+        required: false
+        default: ""
+
+jobs:
+  compute-checksum:
+    runs-on: macOS-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build XCFramework (Release)
+        run: ./gradlew :kmpertrace-runtime:assembleKmperTraceRuntimeReleaseXCFramework
+
+      - name: Zip XCFramework
+        run: |
+          cd kmpertrace-runtime/build/XCFrameworks/release
+          zip -r -X KmperTraceRuntime.xcframework.zip KmperTraceRuntime.xcframework
+
+      - name: Compute SwiftPM checksum
+        id: checksum
+        run: |
+          set -euo pipefail
+          ZIP_PATH="kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip"
+          CHECKSUM=$(swift package compute-checksum "$ZIP_PATH")
+          echo "checksum=$CHECKSUM" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "================ SPM CHECKSUM ================"
+          echo "$CHECKSUM"
+          echo "============================================="
+          echo ""
+
+          if [ -n "${{ github.event.inputs.kmpertrace_version }}" ]; then
+            echo "Suggested binaryTarget URL:"
+            echo "  https://github.com/mobiletoly/kmpertrace/releases/download/v${{ github.event.inputs.kmpertrace_version }}/KmperTraceRuntime.xcframework.zip"
+            echo ""
+          fi
+
+      - name: Upload XCFramework zip as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KmperTraceRuntime.xcframework.zip
+          path: kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip
