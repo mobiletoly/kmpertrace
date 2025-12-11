@@ -3,6 +3,11 @@ name: Publish
 on:
   release:
     types: [published, prereleased]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag/branch to run against"
+        required: false
 
 jobs:
   publish:
