@@ -9,12 +9,12 @@ From the repo root:
 
 ```bash
 ./gradlew :kmpertrace-cli:installDist
-./kmpertrace-cli/build/install/kmpertrace-cli/bin/kmpertrace-cli tree --help
+./kmpertrace-cli/build/install/kmpertrace-cli/bin/kmpertrace-cli --help
 ```
 
 ## Commands
 
-### `tree`
+### `print`
 
 Render trace trees from structured logs (expects lines with the `|{ ts=... }|` suffix emitted by
 KmperTrace).
@@ -26,13 +26,21 @@ Options:
 - `--max-line-width <N>`: Wrap output lines at N characters (unlimited when omitted).
 - `--color {auto|on|off}`: ANSI color output (default: auto).
 - `--time-format {time-only|full}`: Show timestamps as time-only (default) or full ISO.
+- `--raw-logs {off|all|verbose|debug|info|warn|error|assert}`: Include non-KmperTrace raw lines (default: off).
+- `--span-attrs {off|on}`: Show span attributes next to span names (default: off).
 - `--help`: Show usage.
+
+### `tui`
+
+Interactive TUI that streams logs from a source (adb/ios/file/stdin) and live-refreshes.
+
+See `docs/CLI-UserGuide.md` for current flags and keys.
 
 ## Colors
 
 - Default `--color=auto` only emits ANSI when stdout is a TTY. Gradle’s `:run` captures stdout, so colors are off unless forced.
-- Force colors under Gradle: `./gradlew --console=rich :kmpertrace-cli:run --args="tree --file /path/to.log --color=on"`.
-- Or run the installed binary directly in a TTY: `./build/install/kmpertrace-cli/bin/kmpertrace-cli tree --file /path/to.log --color=on`.
+- Force colors under Gradle: `./gradlew --console=rich :kmpertrace-cli:run --args="print --file /path/to.log --color=on"`.
+- Or run the installed binary directly in a TTY: `./build/install/kmpertrace-cli/bin/kmpertrace-cli print --file /path/to.log --color=on`.
 - Disable colors explicitly with `--color=off`.
 
 ## Examples
@@ -40,24 +48,24 @@ Options:
 Render from a file:
 
 ```bash
-kmpertrace-cli tree --file /path/to/results.log
+kmpertrace-cli print --file /path/to/results.log
 ```
 
 Render from `adb logcat` (Android):
 
 ```bash
-adb logcat -v brief | kmpertrace-cli tree
+adb logcat -v brief | kmpertrace-cli print
 ```
 
 Wrap long lines to 80 chars:
 
 ```bash
-kmpertrace-cli tree --file results.log --max-line-width 80
+kmpertrace-cli print --file results.log --max-line-width 80
 ```
 
 Hide source metadata:
 
 ```bash
-kmpertrace-cli tree --file results.log --hide-source
+kmpertrace-cli print --file results.log --hide-source
 ```
-Untraced logs (trace_id=0) are interleaved by timestamp alongside trace output (e.g., a log before a trace will show before the trace header).
+Untraced log records (`trace=0`) are interleaved by timestamp alongside trace output (e.g., a record before a trace will show before the trace header).

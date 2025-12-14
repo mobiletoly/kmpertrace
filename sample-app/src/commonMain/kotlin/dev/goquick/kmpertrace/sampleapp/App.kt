@@ -45,6 +45,7 @@ fun App() {
         KmperTrace.configure(
             minLevel = Level.DEBUG,
             serviceName = "sample-app",
+            emitDebugAttributes = true,
         )
         viewModel.refreshAll(DEFAULT_USER_ID)
     }

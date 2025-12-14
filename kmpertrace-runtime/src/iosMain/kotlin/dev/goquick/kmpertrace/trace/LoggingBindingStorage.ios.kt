@@ -12,7 +12,7 @@ private class LoggingBindingElement(private val value: LoggingBinding) : Corouti
 private var currentBinding: LoggingBinding = LoggingBinding.Unbound // one binding flag per native thread
 // Binding is reinstalled by TraceContextStorage's continuation wrapper when resuming.
 
-actual object LoggingBindingStorage {
+internal actual object LoggingBindingStorage {
     actual fun get(): LoggingBinding = currentBinding
     actual fun set(value: LoggingBinding) {
         currentBinding = value

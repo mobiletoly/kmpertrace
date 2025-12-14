@@ -1,27 +1,27 @@
 package dev.goquick.kmpertrace.log
 
-import dev.goquick.kmpertrace.core.EventKind
+import dev.goquick.kmpertrace.core.LogRecordKind
 import dev.goquick.kmpertrace.core.Level
-import dev.goquick.kmpertrace.core.LogEvent
+import dev.goquick.kmpertrace.core.StructuredLogRecord
 import dev.goquick.kmpertrace.core.TraceContext
 import dev.goquick.kmpertrace.trace.LoggingBinding
 import dev.goquick.kmpertrace.trace.LoggingBindingStorage
 import dev.goquick.kmpertrace.trace.TraceContextStorage
 import dev.goquick.kmpertrace.trace.traceSpan
-import dev.goquick.kmpertrace.trace.inlineSpan
+import dev.goquick.kmpertrace.platform.renderLogLine
 import kotlin.time.Clock
 
 /**
- * Static-style logging API producing structured LogEvents.
+ * Static-style logging API producing structured KmperTrace log records.
  */
 interface LogContext {
     /**
-     * Component name to attach to emitted events (e.g., class or feature).
+     * Component name to attach to emitted log records (e.g., class or feature).
      */
     val component: String?
 
     /**
-     * Operation name within the component to attach to emitted events.
+     * Operation name within the component to attach to emitted log records.
      */
     val operation: String?
 
@@ -35,7 +35,15 @@ interface LogContext {
      */
     fun v(throwable: Throwable? = null, message: () -> String) {
         if (!isLoggable(Level.VERBOSE)) return
-        Log.logInternal(Level.VERBOSE, null, throwable, message, component, operation, buildLocationHint(component, operation))
+        Log.logInternal(
+            Level.VERBOSE,
+            null,
+            throwable,
+            message,
+            component,
+            operation,
+            null
+        )
     }
 
     /**
@@ -43,7 +51,15 @@ interface LogContext {
      */
     fun d(throwable: Throwable? = null, message: () -> String) {
         if (!isLoggable(Level.DEBUG)) return
-        Log.logInternal(Level.DEBUG, null, throwable, message, component, operation, buildLocationHint(component, operation))
+        Log.logInternal(
+            Level.DEBUG,
+            null,
+            throwable,
+            message,
+            component,
+            operation,
+            null
+        )
     }
 
     /**
@@ -51,7 +67,15 @@ interface LogContext {
      */
     fun i(throwable: Throwable? = null, message: () -> String) {
         if (!isLoggable(Level.INFO)) return
-        Log.logInternal(Level.INFO, null, throwable, message, component, operation, buildLocationHint(component, operation))
+        Log.logInternal(
+            Level.INFO,
+            null,
+            throwable,
+            message,
+            component,
+            operation,
+            null
+        )
     }
 
     /**
@@ -59,7 +83,15 @@ interface LogContext {
      */
     fun w(throwable: Throwable? = null, message: () -> String) {
         if (!isLoggable(Level.WARN)) return
-        Log.logInternal(Level.WARN, null, throwable, message, component, operation, buildLocationHint(component, operation))
+        Log.logInternal(
+            Level.WARN,
+            null,
+            throwable,
+            message,
+            component,
+            operation,
+            null
+        )
     }
 
     /**
@@ -67,7 +99,15 @@ interface LogContext {
      */
     fun e(throwable: Throwable? = null, message: () -> String) {
         if (!isLoggable(Level.ERROR)) return
-        Log.logInternal(Level.ERROR, null, throwable, message, component, operation, buildLocationHint(component, operation))
+        Log.logInternal(
+            Level.ERROR,
+            null,
+            throwable,
+            message,
+            component,
+            operation,
+            null
+        )
     }
 
     /**
@@ -75,52 +115,78 @@ interface LogContext {
      */
     fun wtf(throwable: Throwable? = null, message: () -> String) {
         if (!isLoggable(Level.ASSERT)) return
-        Log.logInternal(Level.ASSERT, null, throwable, message, component, operation, buildLocationHint(component, operation))
+        Log.logInternal(
+            Level.ASSERT,
+            null,
+            throwable,
+            message,
+            component,
+            operation,
+            null
+        )
     }
 }
 
 /**
  * Run [block] inside a span named by this logger's component and the provided [operation].
- * The span is created via [traceSpan] and log calls inside the block inherit trace/span IDs; the log context's operation
- * is set once for the duration of the block.
+ * The span is created via [traceSpan] and log calls inside the block inherit trace/span IDs.
  */
-suspend inline fun <T> LogContext.span(operation: String, crossinline block: suspend LogContext.() -> T): T =
-    traceSpan(component = component ?: defaultLoggerName(), operation = operation) {
-        withOperation(operation).block()
-    }
+suspend inline fun <T> LogContext.span(
+    operation: String,
+    attributes: Map<String, String> = emptyMap(),
+    crossinline block: suspend () -> T
+): T = traceSpan(
+    component = component ?: defaultLoggerName(),
+    operation = operation,
+    attributes = attributes
+) {
+    block()
+}
 
 /**
  * Run [block] inside a lightweight child span (inline span) using the current trace/span, without requiring suspend.
  * Useful for synchronous code that still wants a nested span node.
  */
-inline fun <T> LogContext.inlineSpan(operation: String, crossinline block: LogContext.() -> T): T =
-    inlineSpan(component = component ?: defaultLoggerName(), operation = operation) {
-        withOperation(operation).block()
-    }
+inline fun <T> LogContext.inlineSpan(
+    operation: String,
+    attributes: Map<String, String> = emptyMap(),
+    crossinline block: () -> T
+): T = dev.goquick.kmpertrace.trace.inlineSpan(
+    component = component ?: defaultLoggerName(),
+    operation = operation,
+    attributes = attributes
+) {
+    block()
+}
 
 /**
- * Static logger utility for emitting structured KmperTrace events.
+ * Static logger utility for emitting structured KmperTrace log records.
  *
  * When the current coroutine has `LoggingBindingStorage` set to [dev.goquick.kmpertrace.trace.LoggingBinding.BindToSpan],
- * emitted events include trace/span IDs from the active [TraceContext]; otherwise they are unbound.
+ * emitted log records include trace/span IDs from the active [TraceContext]; otherwise they are unbound.
  */
 object Log {
 
     /**
-     * Build a [LogContext] that automatically tags events with the given component.
+     * Build a [LogContext] that automatically tags log records with the given component.
      */
     fun forComponent(component: String): LogContext = ComponentLogContext(component, null)
 
     /**
      * Build a [LogContext] using the simple name of [T] as the component.
      */
-    inline fun <reified T> forClass(): LogContext = forComponent(T::class.simpleName ?: T::class.toString())
+    inline fun <reified T> forClass(): LogContext =
+        forComponent(T::class.simpleName ?: T::class.toString())
 
     /**
      * Verbose log; skipped if below [LoggerConfig.minLevel].
      */
     @Suppress("NOTHING_TO_INLINE")
-    inline fun v(tag: String? = null, throwable: Throwable? = null, noinline message: () -> String) {
+    inline fun v(
+        tag: String? = null,
+        throwable: Throwable? = null,
+        noinline message: () -> String
+    ) {
         if (!isLoggable(Level.VERBOSE)) return
         logInternal(Level.VERBOSE, tag, throwable, message)
     }
@@ -129,7 +195,11 @@ object Log {
      * Debug log; skipped if below [LoggerConfig.minLevel].
      */
     @Suppress("NOTHING_TO_INLINE")
-    inline fun d(tag: String? = null, throwable: Throwable? = null, noinline message: () -> String) {
+    inline fun d(
+        tag: String? = null,
+        throwable: Throwable? = null,
+        noinline message: () -> String
+    ) {
         if (!isLoggable(Level.DEBUG)) return
         logInternal(Level.DEBUG, tag, throwable, message)
     }
@@ -138,7 +208,11 @@ object Log {
      * Info log; skipped if below [LoggerConfig.minLevel].
      */
     @Suppress("NOTHING_TO_INLINE")
-    inline fun i(tag: String? = null, throwable: Throwable? = null, noinline message: () -> String) {
+    inline fun i(
+        tag: String? = null,
+        throwable: Throwable? = null,
+        noinline message: () -> String
+    ) {
         if (!isLoggable(Level.INFO)) return
         logInternal(Level.INFO, tag, throwable, message)
     }
@@ -147,7 +221,11 @@ object Log {
      * Warn log; skipped if below [LoggerConfig.minLevel].
      */
     @Suppress("NOTHING_TO_INLINE")
-    inline fun w(tag: String? = null, throwable: Throwable? = null, noinline message: () -> String) {
+    inline fun w(
+        tag: String? = null,
+        throwable: Throwable? = null,
+        noinline message: () -> String
+    ) {
         if (!isLoggable(Level.WARN)) return
         logInternal(Level.WARN, tag, throwable, message)
     }
@@ -156,7 +234,11 @@ object Log {
      * Error log; skipped if below [LoggerConfig.minLevel].
      */
     @Suppress("NOTHING_TO_INLINE")
-    inline fun e(tag: String? = null, throwable: Throwable? = null, noinline message: () -> String) {
+    inline fun e(
+        tag: String? = null,
+        throwable: Throwable? = null,
+        noinline message: () -> String
+    ) {
         if (!isLoggable(Level.ERROR)) return
         logInternal(Level.ERROR, tag, throwable, message)
     }
@@ -165,7 +247,11 @@ object Log {
      * Assert-level log; skipped if below [LoggerConfig.minLevel].
      */
     @Suppress("NOTHING_TO_INLINE")
-    inline fun wtf(tag: String? = null, throwable: Throwable? = null, noinline message: () -> String) {
+    inline fun wtf(
+        tag: String? = null,
+        throwable: Throwable? = null,
+        noinline message: () -> String
+    ) {
         if (!isLoggable(Level.ASSERT)) return
         logInternal(Level.ASSERT, tag, throwable, message)
     }
@@ -180,16 +266,29 @@ object Log {
         sourceOperation: String? = null,
         sourceLocationHint: String? = null
     ) {
+        if (!isLoggable(level)) return
+        if (LoggerConfig.sinks.isEmpty()) return
+
         val now = Clock.System.now()
         val traceContext = currentTraceContextOrNull()
         val binding = LoggingBindingStorage.get()
         // Only attach trace/span IDs when the current binding instructs us to.
-        val boundContext = if (traceContext != null && binding == LoggingBinding.BindToSpan) traceContext else null
+        val boundContext =
+            if (traceContext != null && binding == LoggingBinding.BindToSpan) traceContext else null
         val component = sourceComponent ?: boundContext?.sourceComponent
         val operation = sourceOperation ?: boundContext?.sourceOperation
-        val locationHint = sourceLocationHint ?: boundContext?.sourceLocationHint
+        val locationHint =
+            when {
+                sourceLocationHint != null -> sourceLocationHint
+                sourceComponent != null || sourceOperation != null -> buildLocationHint(
+                    component,
+                    operation
+                )
 
-        val event = LogEvent(
+                else -> boundContext?.sourceLocationHint
+            }
+
+        val record = StructuredLogRecord(
             timestamp = now,
             level = level,
             loggerName = tag ?: component ?: defaultLoggerName(),
@@ -197,7 +296,7 @@ object Log {
             traceId = boundContext?.traceId,
             spanId = boundContext?.spanId,
             parentSpanId = boundContext?.parentSpanId,
-            eventKind = EventKind.LOG,
+            logRecordKind = LogRecordKind.LOG,
             spanName = boundContext?.spanName,
             durationMs = null,
             threadName = currentThreadNameOrNull(),
@@ -210,10 +309,7 @@ object Log {
             throwable = throwable
         )
 
-        val backends = LoggerConfig.backends
-        if (backends.isEmpty()) return
-
-        dispatchEvent(event)
+        dispatchRecord(record)
     }
 }
 
@@ -224,9 +320,22 @@ internal fun isLoggable(level: Level): Boolean {
 }
 
 @PublishedApi
-internal fun dispatchEvent(event: LogEvent) {
-    if (!LoggerConfig.filter(event)) return
-    LoggerConfig.backends.forEach { backend -> backend.log(event) }
+internal fun dispatchRecord(record: StructuredLogRecord) {
+    val sinks = LoggerConfig.sinks
+    if (sinks.isEmpty()) return
+
+    val rendered = renderLogLine(record)
+    val renderedRecord = LogRecord(
+        timestamp = record.timestamp,
+        level = record.level,
+        tag = record.loggerName.ifBlank { defaultLoggerName() },
+        message = rendered.humanMessage,
+        line = rendered.line,
+        structuredSuffix = rendered.structuredSuffix
+    )
+
+    if (!LoggerConfig.filter(renderedRecord)) return
+    sinks.forEach { sink -> sink.emit(renderedRecord) }
 }
 
 @PublishedApi

@@ -1,5 +1,6 @@
 package dev.goquick.kmpertrace.cli
 
+import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -7,7 +8,7 @@ class FormatTimestampTest {
     @Test
     fun converts_epoch_seconds_to_time_only() {
         val ts = "1765254324.631" // 2025-12-09T04:25:24.631Z
-        assertEquals("04:25:24.631", formatTimestamp(ts, TimeFormat.TIME_ONLY))
+        assertEquals("04:25:24.631", formatTimestamp(ts, TimeFormat.TIME_ONLY, ZoneOffset.UTC))
         assertEquals("2025-12-09T04:25:24.631Z", formatTimestamp(ts, TimeFormat.FULL))
     }
 

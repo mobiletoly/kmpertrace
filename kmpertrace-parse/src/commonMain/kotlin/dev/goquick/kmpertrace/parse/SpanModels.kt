@@ -15,7 +15,8 @@ data class SpanNode(
     val sourceFile: String?,
     val sourceLine: Int?,
     val sourceFunction: String?,
-    val events: List<ParsedEvent>,
+    val attributes: Map<String, String>,
+    val records: List<ParsedLogRecord>,
     val children: List<SpanNode>
 )
 

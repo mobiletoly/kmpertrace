@@ -1,20 +1,20 @@
 package dev.goquick.kmpertrace.trace
 
-import dev.goquick.kmpertrace.core.EventKind
+import dev.goquick.kmpertrace.core.LogRecordKind
 import dev.goquick.kmpertrace.core.Level
-import dev.goquick.kmpertrace.core.LogEvent
+import dev.goquick.kmpertrace.core.StructuredLogRecord
 import dev.goquick.kmpertrace.core.SpanKind
 import dev.goquick.kmpertrace.core.TraceContext
 import dev.goquick.kmpertrace.log.Log
 import dev.goquick.kmpertrace.log.LoggerConfig
 import dev.goquick.kmpertrace.log.currentThreadNameOrNull
-import dev.goquick.kmpertrace.log.dispatchEvent
+import dev.goquick.kmpertrace.log.dispatchRecord
 import dev.goquick.kmpertrace.log.defaultLoggerName
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
+import kotlin.time.Clock
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.random.Random
-import kotlin.time.Clock
 
 // Propagation pipeline in one place:
 // 1) Tracer.span creates a TraceContext and installs both TraceContextStorage.element(...) and
@@ -34,7 +34,7 @@ interface SpanScope {
     val traceContext: TraceContext
 
     /**
-     * Emit a log event associated with the current span.
+     * Emit a log record associated with the current span.
      */
     fun log(level: Level = Level.INFO, message: () -> String)
 }
@@ -75,12 +75,14 @@ object KmperTracer : Tracer {
         val parentSpanId = parentContext?.spanId
         val spanId = generateSpanId()
 
+        val normalizedAttributes = normalizeSpanAttributes(attributes)
+
         val newContext = TraceContext(
             traceId = traceId,
             spanId = spanId,
             parentSpanId = parentSpanId,
             spanName = name,
-            attributes = attributes,
+            attributes = normalizedAttributes,
             sourceComponent = sourceComponent ?: parentContext?.sourceComponent,
             sourceOperation = sourceOperation ?: parentContext?.sourceOperation,
             sourceLocationHint = sourceLocationHint ?: parentContext?.sourceLocationHint
@@ -97,7 +99,7 @@ object KmperTracer : Tracer {
             currentCoroutineContext() +
                 newContext + // surface TraceContext via CoroutineContext lookup
                 TraceContextStorage.element(newContext, parentInterceptor) + // install platform-specific propagation
-                LoggingBindingStorage.element(LoggingBinding.BindToSpan) // ensure Log binds events to this span
+                LoggingBindingStorage.element(LoggingBinding.BindToSpan) // ensure Log binds log records to this span
         ) {
             // Ensure the current thread sees the span context immediately, and restore afterward.
             TraceContextStorage.set(newContext)
@@ -178,6 +180,7 @@ fun <T> inlineSpan(
     block: () -> T
 ): T {
     val parent = TraceContextStorage.get()
+    val normalizedAttributes = normalizeSpanAttributes(attributes)
     val ctx = TraceContext(
         traceId = parent?.traceId ?: generateTraceId(),
         spanId = generateSpanId(),
@@ -186,7 +189,7 @@ fun <T> inlineSpan(
         sourceComponent = component,
         sourceOperation = operation,
         sourceLocationHint = "$component.$operation",
-        attributes = attributes
+        attributes = normalizedAttributes
     )
     val startInstant = Clock.System.now()
     emitSpanStart(ctx, SpanKind.INTERNAL)
@@ -204,8 +207,8 @@ fun <T> inlineSpan(
 
 private fun emitSpanStart(context: TraceContext, kind: SpanKind) {
     val now = Clock.System.now()
-    val defaultMsg = defaultSpanMessage(EventKind.SPAN_START, context.spanName)
-    val event = LogEvent(
+    val defaultMsg = defaultSpanMessage(LogRecordKind.SPAN_START, context.spanName)
+    val record = StructuredLogRecord(
         timestamp = now,
         level = Level.INFO,
         loggerName = context.sourceComponent ?: defaultLoggerName(),
@@ -213,7 +216,7 @@ private fun emitSpanStart(context: TraceContext, kind: SpanKind) {
         traceId = context.traceId,
         spanId = context.spanId,
         parentSpanId = context.parentSpanId,
-        eventKind = EventKind.SPAN_START,
+        logRecordKind = LogRecordKind.SPAN_START,
         spanName = context.spanName,
         durationMs = 0L,
         threadName = currentThreadNameOrNull(),
@@ -228,26 +231,34 @@ private fun emitSpanStart(context: TraceContext, kind: SpanKind) {
             }
         }
     )
-    dispatchEvent(event)
+    dispatchRecord(record)
 }
 
 private fun emitSpanEnd(context: TraceContext, startInstant: kotlin.time.Instant, error: Throwable?) {
     val endInstant = Clock.System.now()
     val durationMs = endInstant.toEpochMilliseconds() - startInstant.toEpochMilliseconds()
-    val defaultMsg = defaultSpanMessage(EventKind.SPAN_END, context.spanName)
+    val defaultMsg = defaultSpanMessage(LogRecordKind.SPAN_END, context.spanName)
     val baseAttributes = mutableMapOf<String, String>()
     if (error != null) {
         baseAttributes["status"] = "ERROR"
-        baseAttributes["error_type"] = error::class.simpleName ?: "Unknown"
-        baseAttributes["error_message"] = error.message ?: ""
+        baseAttributes["err_type"] = error::class.simpleName ?: "Unknown"
+        baseAttributes["err_msg"] = error.message ?: ""
     }
 
+    val emittedSpanAttributes =
+        context.attributes
+            .filterKeys { key -> key.startsWith(ATTRIBUTE_PREFIX) || key.startsWith(DEBUG_ATTRIBUTE_PREFIX) }
+            .let { attrs ->
+                if (LoggerConfig.emitDebugAttributes) attrs
+                else attrs.filterKeys { key -> !key.startsWith(DEBUG_ATTRIBUTE_PREFIX) }
+            }
+
     val mergedAttributes = buildMap {
-        putAll(context.attributes)
+        putAll(emittedSpanAttributes)
         putAll(baseAttributes)
     }
 
-    val event = LogEvent(
+    val record = StructuredLogRecord(
         timestamp = endInstant,
         level = if (error != null) Level.ERROR else Level.INFO,
         loggerName = context.sourceComponent ?: defaultLoggerName(),
@@ -255,7 +266,7 @@ private fun emitSpanEnd(context: TraceContext, startInstant: kotlin.time.Instant
         traceId = context.traceId,
         spanId = context.spanId,
         parentSpanId = context.parentSpanId,
-        eventKind = EventKind.SPAN_END,
+        logRecordKind = LogRecordKind.SPAN_END,
         spanName = context.spanName,
         durationMs = durationMs,
         threadName = currentThreadNameOrNull(),
@@ -267,7 +278,46 @@ private fun emitSpanEnd(context: TraceContext, startInstant: kotlin.time.Instant
         attributes = mergedAttributes,
         throwable = error
     )
-    dispatchEvent(event)
+    dispatchRecord(record)
+}
+
+private fun normalizeSpanAttributes(attributes: Map<String, String>): Map<String, String> {
+    if (attributes.isEmpty()) return emptyMap()
+
+    return buildMap {
+        attributes.forEach { (rawKey, value) ->
+            val isDebug = rawKey.startsWith(DEBUG_API_PREFIX)
+            val baseKey = if (isDebug) rawKey.removePrefix(DEBUG_API_PREFIX) else rawKey
+            val safeKey = sanitizeAttrKey(baseKey)
+            val wireKey = (if (isDebug) DEBUG_ATTRIBUTE_PREFIX else ATTRIBUTE_PREFIX) + safeKey
+            put(wireKey, value)
+        }
+    }
+}
+
+private fun sanitizeAttrKey(key: String): String {
+    if (key.isNotEmpty() && key.all { it in allowedKeyChars }) return key
+
+    val replaced = buildString {
+        key.forEach { ch ->
+            append(if (ch in allowedKeyChars) ch else '_')
+        }
+    }
+    val normalized = replaced.ifEmpty { "key" }
+    return "invalid_$normalized"
+}
+
+private const val ATTRIBUTE_PREFIX = "a:"
+private const val DEBUG_ATTRIBUTE_PREFIX = "d:"
+private const val DEBUG_API_PREFIX = "?"
+
+private val allowedKeyChars: Set<Char> = buildSet {
+    ('a'..'z').forEach(::add)
+    ('A'..'Z').forEach(::add)
+    ('0'..'9').forEach(::add)
+    add('_')
+    add('-')
+    add('.')
 }
 
 // Use 64-bit trace IDs (16 hex chars) instead of 128-bit to shorten logs.

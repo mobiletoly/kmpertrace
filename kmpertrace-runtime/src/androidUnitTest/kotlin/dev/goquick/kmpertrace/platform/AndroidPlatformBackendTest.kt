@@ -1,9 +1,9 @@
 package dev.goquick.kmpertrace.platform
 
-import dev.goquick.kmpertrace.core.EventKind
+import dev.goquick.kmpertrace.core.LogRecordKind
 import dev.goquick.kmpertrace.core.Level
-import dev.goquick.kmpertrace.core.LogEvent
-import dev.goquick.kmpertrace.log.LoggerConfig
+import dev.goquick.kmpertrace.core.StructuredLogRecord
+import dev.goquick.kmpertrace.log.KmperTrace
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -14,23 +14,22 @@ class AndroidPlatformBackendTest {
 
     @AfterTest
     fun resetConfig() {
-        LoggerConfig.backends = emptyList()
-        LoggerConfig.minLevel = Level.DEBUG
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = emptyList())
     }
 
     @Test
     fun platform_backend_formats_and_prints() {
-        val event = sampleEvent()
-        val expectedStructured = formatLogLine(event, includeHumanPrefix = false)
+        val record = sampleEvent()
+        val expectedStructured = formatLogLine(record, includeHumanPrefix = false)
         val expectedPrefix = "AndroidLogger: android hello"
         val expected = "$expectedPrefix $expectedStructured"
 
         // We don't invoke AndroidLog in unit tests (no Android runtime); just assert the composed line.
         val human = buildString {
-            append(event.loggerName)
-            if (event.message.isNotBlank()) append(": ").append(event.message)
+            append(record.loggerName)
+            if (record.message.isNotBlank()) append(": ").append(record.message)
         }
-        val composed = "$human ${formatLogLine(event, includeHumanPrefix = false)}"
+        val composed = "$human ${formatLogLine(record, includeHumanPrefix = false)}"
 
         assertEquals(expected, composed)
     }
@@ -38,7 +37,7 @@ class AndroidPlatformBackendTest {
     @Test
     fun log_includes_current_thread_name() {
         val currentThread = Thread.currentThread().name
-        val event = LogEvent(
+        val record = StructuredLogRecord(
             timestamp = Instant.parse("2025-01-02T03:04:05Z"),
             level = Level.INFO,
             loggerName = "ThreadTest",
@@ -46,7 +45,7 @@ class AndroidPlatformBackendTest {
             threadName = currentThread
         )
 
-        val rendered = formatLogLine(event, includeHumanPrefix = false)
+        val rendered = formatLogLine(record, includeHumanPrefix = false)
         assertContains(rendered, """thread="$currentThread"""")
         assertContains(rendered, "log=ThreadTest")
         // human prefix expectation
@@ -56,18 +55,18 @@ class AndroidPlatformBackendTest {
 
     @Test
     fun formatLogLine_includes_error_fields_and_stack() {
-        val event = sampleEvent().copy(
-            attributes = mapOf("status" to "ERROR", "error_type" to "IllegalStateException", "error_message" to "boom"),
+        val record = sampleEvent().copy(
+            attributes = mapOf("status" to "ERROR", "err_type" to "IllegalStateException", "err_msg" to "boom"),
             throwable = IllegalStateException("boom")
         )
-        val rendered = formatLogLine(event, includeHumanPrefix = false)
+        val rendered = formatLogLine(record, includeHumanPrefix = false)
         assertContains(rendered, "status=\"ERROR\"")
-        assertContains(rendered, "error_type=\"IllegalStateException\"")
-        assertContains(rendered, "error_message=\"boom\"")
+        assertContains(rendered, "err_type=\"IllegalStateException\"")
+        assertContains(rendered, "err_msg=\"boom\"")
         assertContains(rendered, "stack_trace=")
     }
 
-    private fun sampleEvent(): LogEvent = LogEvent(
+    private fun sampleEvent(): StructuredLogRecord = StructuredLogRecord(
         timestamp = Instant.parse("2025-01-02T03:04:05Z"),
         level = Level.INFO,
         loggerName = "AndroidLogger",
@@ -75,7 +74,7 @@ class AndroidPlatformBackendTest {
         traceId = "traceA",
         spanId = "spanA",
         parentSpanId = "-",
-        eventKind = EventKind.SPAN_END,
+        logRecordKind = LogRecordKind.SPAN_END,
         spanName = "op",
         durationMs = 77,
         threadName = "main",

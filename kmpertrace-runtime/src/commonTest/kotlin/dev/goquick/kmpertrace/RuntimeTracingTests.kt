@@ -1,12 +1,15 @@
 package dev.goquick.kmpertrace
 
-import dev.goquick.kmpertrace.core.EventKind
 import dev.goquick.kmpertrace.core.Level
 import dev.goquick.kmpertrace.core.TraceContext
 import dev.goquick.kmpertrace.log.Log
-import dev.goquick.kmpertrace.log.LogBackend
-import dev.goquick.kmpertrace.log.LoggerConfig
+import dev.goquick.kmpertrace.log.LogRecord
+import dev.goquick.kmpertrace.log.LogSink
+import dev.goquick.kmpertrace.log.KmperTrace
+import dev.goquick.kmpertrace.log.inlineSpan
+import dev.goquick.kmpertrace.log.span
 import dev.goquick.kmpertrace.trace.traceSpan
+import dev.goquick.kmpertrace.testutil.parseStructuredSuffix
 import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -15,25 +18,31 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-private class CollectingBackend : LogBackend {
-    val events = mutableListOf<dev.goquick.kmpertrace.core.LogEvent>()
-    override fun log(event: dev.goquick.kmpertrace.core.LogEvent) {
-        events += event
+private class CollectingSink : LogSink {
+    val records = mutableListOf<LogRecord>()
+    override fun emit(record: LogRecord) {
+        records += record
     }
 }
 
 class RuntimeTracingTests {
 
-    private val backend = CollectingBackend()
+    private val sink = CollectingSink()
+    private val utcZTimestampRegex =
+        Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$""")
 
     @AfterTest
     fun resetLoggerConfig() {
-        LoggerConfig.minLevel = Level.DEBUG
-        LoggerConfig.serviceName = null
-        LoggerConfig.environment = null
-        LoggerConfig.backends = emptyList()
-        LoggerConfig.filter = { event -> event.level.ordinal >= LoggerConfig.minLevel.ordinal }
-        backend.events.clear()
+        KmperTrace.configure(
+            minLevel = Level.DEBUG,
+            serviceName = null,
+            environment = null,
+            sinks = emptyList(),
+            filter = { true },
+            renderGlyphs = true,
+            emitDebugAttributes = false
+        )
+        sink.records.clear()
     }
 
     @Test
@@ -54,36 +63,50 @@ class RuntimeTracingTests {
 
     @Test
     fun log_in_span_has_trace_fields() = runTest {
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
         traceSpan("span-one") {
             Log.d { "hello" }
         }
 
-        val logEvent = backend.events.firstOrNull { it.eventKind == EventKind.LOG }
-        assertNotNull(logEvent)
-        assertEquals("span-one", logEvent.spanName)
-        assertNotNull(logEvent.traceId)
-        assertNotNull(logEvent.spanId)
+        val record = sink.records.firstOrNull { it.message == "hello" }
+        assertNotNull(record)
+        val fields = parseStructuredSuffix(record.structuredSuffix)
+        assertNotNull(fields["trace"])
+        assertNotNull(fields["span"])
+    }
+
+    @Test
+    fun timestamp_is_emitted_as_utc_z() = runTest {
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
+
+        Log.i { "hello" }
+
+        val record = sink.records.single()
+        val fields = parseStructuredSuffix(record.structuredSuffix)
+        val ts = fields["ts"] ?: error("ts missing from structured suffix: ${record.structuredSuffix}")
+
+        assertTrue(
+            utcZTimestampRegex.matches(ts),
+            "expected ts to be canonical UTC Z timestamp, got: $ts"
+        )
     }
 
     @Test
     fun span_start_and_end_emitted() = runTest {
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
         traceSpan("measure") { /* no-op */ }
 
-        val kinds = backend.events.map { it.eventKind }
-        assertTrue(EventKind.SPAN_START in kinds, "SPAN_START not emitted")
-        assertTrue(EventKind.SPAN_END in kinds, "SPAN_END not emitted")
-
-        val spanEnd = backend.events.first { it.eventKind == EventKind.SPAN_END }
-        assertTrue((spanEnd.durationMs ?: -1) >= 0, "durationMs should be non-negative")
+        val fields = sink.records.map { parseStructuredSuffix(it.structuredSuffix) }
+        val kinds = fields.mapNotNull { it["kind"] }.toSet()
+        assertTrue("SPAN_START" in kinds, "SPAN_START not emitted")
+        assertTrue("SPAN_END" in kinds, "SPAN_END not emitted")
     }
 
     @Test
     fun span_end_marks_error_when_exception() = runTest {
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
         runCatching {
             traceSpan("boom") {
@@ -91,30 +114,34 @@ class RuntimeTracingTests {
             }
         }
 
-        val spanEnd = backend.events.first { it.eventKind == EventKind.SPAN_END }
-        assertEquals("ERROR", spanEnd.attributes["status"])
-        assertEquals("IllegalStateException", spanEnd.attributes["error_type"])
-        assertEquals("boom!", spanEnd.attributes["error_message"])
-        assertNotNull(spanEnd.throwable)
+        val spanEnd = sink.records
+            .map { parseStructuredSuffix(it.structuredSuffix) }
+            .first { it["kind"] == "SPAN_END" }
+
+        assertEquals("ERROR", spanEnd["status"])
+        assertEquals("IllegalStateException", spanEnd["err_type"])
+        assertEquals("boom!", spanEnd["err_msg"])
+        assertNotNull(spanEnd["stack_trace"])
     }
 
     @Test
     fun span_end_carries_custom_attributes() = runTest {
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
         traceSpan(name = "attrs", attributes = mapOf("user" to "123", "req" to "r1")) {
             // no-op
         }
 
-        val spanEnd = backend.events.first { it.eventKind == EventKind.SPAN_END }
-        assertEquals("123", spanEnd.attributes["user"])
-        assertEquals("r1", spanEnd.attributes["req"])
+        val spanEnd = sink.records
+            .map { parseStructuredSuffix(it.structuredSuffix) }
+            .first { it["kind"] == "SPAN_END" }
+        assertEquals("123", spanEnd["a:user"])
+        assertEquals("r1", spanEnd["a:req"])
     }
 
     @Test
     fun disabled_debug_log_does_not_evaluate_message() = runTest {
-        LoggerConfig.minLevel = Level.INFO
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(minLevel = Level.INFO, sinks = listOf(sink))
 
         var invoked = false
         Log.d {
@@ -123,41 +150,139 @@ class RuntimeTracingTests {
         }
 
         assertFalse(invoked)
-        assertTrue(backend.events.isEmpty())
+        assertTrue(sink.records.isEmpty())
     }
 
     @Test
     fun component_logger_sets_source_metadata() = runTest {
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
         val log = Log.forComponent("ProfileRepo").withOperation("loadProfile")
 
         log.i { "hello" }
 
-        val event = backend.events.single()
-        assertEquals("ProfileRepo", event.sourceComponent)
-        assertEquals("loadProfile", event.sourceOperation)
-        assertEquals("ProfileRepo.loadProfile", event.sourceLocationHint)
+        val record = sink.records.single()
+        val fields = parseStructuredSuffix(record.structuredSuffix)
+        assertEquals("ProfileRepo/loadProfile", fields["src"])
     }
 
     @Test
     fun trace_span_with_component_propagates_source() = runTest {
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
         traceSpan(component = "ProfileRepo", operation = "refresh") {
             Log.i { "inside span" }
         }
 
-        val start = backend.events.first { it.eventKind == EventKind.SPAN_START }
-        val logEvent = backend.events.first { it.eventKind == EventKind.LOG }
-        assertEquals("ProfileRepo", start.sourceComponent)
-        assertEquals("refresh", start.sourceOperation)
-        assertEquals("ProfileRepo", logEvent.sourceComponent)
-        assertEquals("refresh", logEvent.sourceOperation)
+        val fields = sink.records.map { parseStructuredSuffix(it.structuredSuffix) }
+        val spanStart = fields.first { it["kind"] == "SPAN_START" }
+        val log = fields.first { it["kind"] == null }
+        assertEquals("ProfileRepo/refresh", spanStart["src"])
+        assertEquals("ProfileRepo/refresh", log["src"])
+    }
+
+    @Test
+    fun component_log_context_inside_span_inherits_span_location_hint() = runTest {
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
+        val log = Log.forComponent("ProfileRepo")
+
+        traceSpan(component = "ProfileRepo", operation = "refresh") {
+            log.i { "inside span" }
+        }
+
+        val record = sink.records.first { it.message == "inside span" }
+        val fields = parseStructuredSuffix(record.structuredSuffix)
+        assertEquals("ProfileRepo/refresh", fields["src"])
+    }
+
+    @Test
+    fun log_context_span_passes_attributes_to_span_end() = runTest {
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
+
+        val log = Log.forComponent("ProfileRepo")
+        log.span(operation = "refresh", attributes = mapOf("user" to "123")) {
+            // no-op
+        }
+
+        val spanEnd = sink.records
+            .map { parseStructuredSuffix(it.structuredSuffix) }
+            .first { it["kind"] == "SPAN_END" }
+        assertEquals("123", spanEnd["a:user"])
+    }
+
+    @Test
+    fun log_context_inline_span_passes_attributes_to_span_end() = runTest {
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
+
+        val log = Log.forComponent("ProfileRepo")
+        log.inlineSpan(operation = "syncWork", attributes = mapOf("req" to "r1")) {
+            // no-op
+        }
+
+        val spanEnd = sink.records
+            .map { parseStructuredSuffix(it.structuredSuffix) }
+            .first { it["kind"] == "SPAN_END" }
+        assertEquals("r1", spanEnd["a:req"])
+    }
+
+    @Test
+    fun span_drops_debug_attributes_by_default() = runTest {
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink), emitDebugAttributes = false)
+
+        traceSpan(
+            name = "attrs",
+            attributes = mapOf("x" to "1", "?userEmail" to "a@b.com")
+        ) {
+            // no-op
+        }
+
+        val spanEnd = sink.records
+            .map { parseStructuredSuffix(it.structuredSuffix) }
+            .first { it["kind"] == "SPAN_END" }
+        assertEquals("1", spanEnd["a:x"])
+        assertEquals(null, spanEnd["d:userEmail"])
+    }
+
+    @Test
+    fun span_includes_debug_attributes_when_enabled() = runTest {
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink), emitDebugAttributes = true)
+
+        traceSpan(
+            name = "attrs",
+            attributes = mapOf("?userEmail" to "a@b.com")
+        ) {
+            // no-op
+        }
+
+        val spanEnd = sink.records
+            .map { parseStructuredSuffix(it.structuredSuffix) }
+            .first { it["kind"] == "SPAN_END" }
+        assertEquals("a@b.com", spanEnd["d:userEmail"])
+    }
+
+    @Test
+    fun span_sanitizes_invalid_attribute_keys() = runTest {
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink), emitDebugAttributes = true)
+
+        traceSpan(
+            name = "attrs",
+            attributes = mapOf(
+                "user id" to "1",
+                "?bad key!" to "2"
+            )
+        ) {
+            // no-op
+        }
+
+        val spanEnd = sink.records
+            .map { parseStructuredSuffix(it.structuredSuffix) }
+            .first { it["kind"] == "SPAN_END" }
+        assertEquals("1", spanEnd["a:invalid_user_id"])
+        assertEquals("2", spanEnd["d:invalid_bad_key_"])
     }
 
     @Test
     fun nested_span_inherits_component_and_operation() = runTest {
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
         traceSpan(component = "Downloader", operation = "DownloadProfile") {
             traceSpan("FetchHttp") {
@@ -165,12 +290,10 @@ class RuntimeTracingTests {
             }
         }
 
-        val childStart = backend.events.first { it.eventKind == EventKind.SPAN_START && it.spanName == "FetchHttp" }
-        val childLog = backend.events.first { it.eventKind == EventKind.LOG && it.message.contains("inside child") }
-
-        assertEquals("Downloader", childStart.sourceComponent)
-        assertEquals("DownloadProfile", childStart.sourceOperation)
-        assertEquals("Downloader", childLog.sourceComponent)
-        assertEquals("DownloadProfile", childLog.sourceOperation)
+        val fields = sink.records.map { parseStructuredSuffix(it.structuredSuffix) }
+        val childStart = fields.first { it["kind"] == "SPAN_START" && it["name"] == "FetchHttp" }
+        val childLog = fields.first { it["kind"] == null && it["head"] == "inside child" }
+        assertEquals("Downloader/DownloadProfile", childStart["src"])
+        assertEquals("Downloader/DownloadProfile", childLog["src"])
     }
 }

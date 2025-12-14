@@ -3,9 +3,9 @@ package dev.goquick.kmpertrace.core
 import kotlin.time.Instant
 
 /**
- * Structured representation of a log or span event emitted by KmperTrace.
+ * Structured representation of a KmperTrace log record.
  */
-data class LogEvent(
+internal data class StructuredLogRecord(
     val timestamp: Instant,
     val level: Level,
     val loggerName: String,
@@ -14,7 +14,7 @@ data class LogEvent(
     val traceId: String? = null,
     val spanId: String? = null,
     val parentSpanId: String? = null,
-    val eventKind: EventKind = EventKind.LOG,
+    val logRecordKind: LogRecordKind = LogRecordKind.LOG,
     val spanName: String? = null,
     val durationMs: Long? = null,
 

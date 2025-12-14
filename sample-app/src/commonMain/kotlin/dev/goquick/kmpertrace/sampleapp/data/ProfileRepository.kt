@@ -13,7 +13,8 @@ class ProfileRepository(
 
     private val log = Log.forComponent("ProfileRepository")
 
-    suspend fun loadProfile(userId: String): Profile = traceSpan(component = "ProfileRepository", operation = "loadProfile", attributes = mapOf("userId" to userId)) {
+    suspend fun loadProfile(userId: String): Profile =
+        traceSpan(component = "ProfileRepository", operation = "loadProfile", attributes = mapOf("userId" to userId)) {
         log.withOperation("loadProfile").d { "loadProfile begin for $userId" }
         database.loadProfile(userId)?.let {
             log.withOperation("loadProfile").d { "Profile cache hit" }
@@ -26,7 +27,8 @@ class ProfileRepository(
         fresh
     }
 
-    suspend fun loadContacts(userId: String): List<Contact> = traceSpan(component = "ProfileRepository", operation = "loadContacts", attributes = mapOf("userId" to userId)) {
+    suspend fun loadContacts(userId: String): List<Contact> =
+        traceSpan(component = "ProfileRepository", operation = "loadContacts", attributes = mapOf("userId" to userId)) {
         log.withOperation("loadContacts").d { "loadContacts begin for $userId" }
         database.loadContacts(userId)?.let {
             log.withOperation("loadContacts").d { "Contacts cache hit" }
@@ -38,7 +40,8 @@ class ProfileRepository(
         fresh
     }
 
-    suspend fun loadActivity(userId: String): List<ActivityEvent> = traceSpan(component = "ProfileRepository", operation = "loadActivity", attributes = mapOf("userId" to userId)) {
+    suspend fun loadActivity(userId: String): List<ActivityEvent> =
+        traceSpan(component = "ProfileRepository", operation = "loadActivity", attributes = mapOf("userId" to userId)) {
         log.withOperation("loadActivity").d { "loadActivity begin for $userId" }
         database.loadActivity(userId)?.let {
             log.withOperation("loadActivity").d { "Activity cache hit" }

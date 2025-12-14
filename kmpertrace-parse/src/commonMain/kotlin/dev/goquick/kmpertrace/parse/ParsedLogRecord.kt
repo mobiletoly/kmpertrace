@@ -3,11 +3,11 @@ package dev.goquick.kmpertrace.parse
 /**
  * Parsed representation of a structured KmperTrace log line.
  */
-data class ParsedEvent(
+data class ParsedLogRecord(
     val traceId: String,
     val spanId: String,
     val parentSpanId: String?,
-    val eventKind: EventKind,
+    val logRecordKind: LogRecordKind,
     val spanName: String?,
     val durationMs: Long?,
     val loggerName: String?,

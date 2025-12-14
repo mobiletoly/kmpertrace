@@ -1,8 +1,8 @@
 package dev.goquick.kmpertrace.cli
 
-import dev.goquick.kmpertrace.parse.ParsedEvent
+import dev.goquick.kmpertrace.parse.ParsedLogRecord
 import dev.goquick.kmpertrace.parse.parseLine
-import dev.goquick.kmpertrace.parse.EventKind
+import dev.goquick.kmpertrace.parse.LogRecordKind
 
 enum class RawLogLevel { OFF, ALL, VERBOSE, DEBUG, INFO, WARN, ERROR, ASSERT }
 
@@ -41,21 +41,21 @@ internal fun parseRawLevel(value: String?): RawLogLevel =
 internal fun parseLinesWithRaw(
     lines: Sequence<String>,
     rawLevel: RawLogLevel
-): Pair<List<dev.goquick.kmpertrace.parse.ParsedEvent>, List<dev.goquick.kmpertrace.parse.ParsedEvent>> {
-    val structured = mutableListOf<dev.goquick.kmpertrace.parse.ParsedEvent>()
-    val raw = mutableListOf<dev.goquick.kmpertrace.parse.ParsedEvent>()
+): Pair<List<dev.goquick.kmpertrace.parse.ParsedLogRecord>, List<dev.goquick.kmpertrace.parse.ParsedLogRecord>> {
+    val structured = mutableListOf<dev.goquick.kmpertrace.parse.ParsedLogRecord>()
+    val raw = mutableListOf<dev.goquick.kmpertrace.parse.ParsedLogRecord>()
     lines.forEach { line ->
-        val evt = parseLine(line)
-        if (evt != null) {
-            structured += evt
+        val record = parseLine(line)
+        if (record != null) {
+            structured += record
         } else if (rawLevel != RawLogLevel.OFF) {
-            rawEventFromLine(line, rawLevel)?.let { raw += it }
+            rawRecordFromLine(line, rawLevel)?.let { raw += it }
         }
     }
     return structured to raw
 }
 
-internal fun rawEventFromLine(line: String, minLevel: RawLogLevel): ParsedEvent? {
+internal fun rawRecordFromLine(line: String, minLevel: RawLogLevel): ParsedLogRecord? {
     // Skip if it's a structured KmperTrace line.
     if (parseLine(line) != null) return null
     if (isNoiseLine(line)) return null
@@ -64,11 +64,11 @@ internal fun rawEventFromLine(line: String, minLevel: RawLogLevel): ParsedEvent?
     if (line.contains("|{")) return null // structured line; skip duplicating in raw view
     val parsed = dispatchParsers(line) ?: return null
     if (!levelAllows(parsed.level, minLevel)) return null
-    return ParsedEvent(
+    return ParsedLogRecord(
         traceId = "0",
         spanId = "0",
         parentSpanId = null,
-        eventKind = EventKind.LOG,
+        logRecordKind = LogRecordKind.LOG,
         spanName = "-",
         durationMs = null,
         loggerName = parsed.logger,
@@ -122,12 +122,21 @@ private fun dispatchParsers(line: String): RawLogParseResult? {
  */
 private object AndroidLogcatParser : RawLogParser {
     private val epochRegex =
-        Regex("^\\s*(\\d+\\.\\d+)\\s+(\\d+)\\s+(\\d+)\\s+([VDIWEFA])\\s+([^:]+):\\s*(.*)$")
+        Regex(
+            "^\\s*(\\d+\\.\\d+)\\s+(\\d+)\\s+(\\d+)\\s+([VDIWEFA])\\s+([^:]+):\\s*(.*)$",
+            setOf(RegexOption.DOT_MATCHES_ALL)
+        )
     private val monthDayRegex =
-        Regex("^\\s*(\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d+)\\s+(\\d+)\\s+(\\d+)\\s+([VDIWEFA])\\s+([^:]+):\\s*(.*)$")
+        Regex(
+            "^\\s*(\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d+)\\s+(\\d+)\\s+(\\d+)\\s+([VDIWEFA])\\s+([^:]+):\\s*(.*)$",
+            setOf(RegexOption.DOT_MATCHES_ALL)
+        )
     private val studioRegex =
         // 2025-12-09 01:29:53.305  5510-5510  ziparchive  dev.goquick...  W  message
-        Regex("^\\s*(\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d+)\\s+\\d+[- ]+\\d+\\s+(\\S+)\\s+\\S+\\s+([VDIWEFA])\\s+(.*)$")
+        Regex(
+            "^\\s*(\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d+)\\s+\\d+[- ]+\\d+\\s+(\\S+)\\s+\\S+\\s+([VDIWEFA])\\s+(.*)$",
+            setOf(RegexOption.DOT_MATCHES_ALL)
+        )
 
     override fun parse(line: String): RawLogParseResult? {
         val match = epochRegex.find(line)
@@ -297,49 +306,4 @@ private object GenericRawParser : RawLogParser {
         }
         return null
     }
-}
-
-private val levelRegex = Regex("\\b(VERBOSE|DEBUG|INFO|WARN|WARNING|ERROR|ASSERT|FATAL)\\b", RegexOption.IGNORE_CASE)
-private val logcatLevelRegex = Regex("\\b([VDIWEF])\\/[^:]*:")
-
-private fun detectLevel(line: String): RawLogLevel? {
-    logcatLevelRegex.find(line)?.let { m ->
-        return when (m.groupValues[1].uppercase()) {
-            "V" -> RawLogLevel.VERBOSE
-            "D" -> RawLogLevel.DEBUG
-            "I" -> RawLogLevel.INFO
-            "W" -> RawLogLevel.WARN
-            "E" -> RawLogLevel.ERROR
-            "F" -> RawLogLevel.ASSERT
-            else -> null
-        }
-    }
-    levelRegex.find(line)?.let { m ->
-        return when (m.groupValues[1].lowercase()) {
-            "verbose" -> RawLogLevel.VERBOSE
-            "debug" -> RawLogLevel.DEBUG
-            "info" -> RawLogLevel.INFO
-            "warn", "warning" -> RawLogLevel.WARN
-            "error" -> RawLogLevel.ERROR
-            "assert", "fatal" -> RawLogLevel.ASSERT
-            else -> null
-        }
-    }
-    return null
-}
-
-private val isoTsRegex = Regex("\\d{4}-\\d{2}-\\d{2}T\\S+")
-private val logcatTsRegex = Regex("\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d+")
-
-private fun detectTimestamp(line: String): String? =
-    isoTsRegex.find(line)?.value ?: logcatTsRegex.find(line)?.value
-
-private fun detectLogger(line: String): String? {
-    // try "LoggerName: message"
-    val colon = line.indexOf(':')
-    if (colon > 0) {
-        val candidate = line.substring(0, colon).trim()
-        if (candidate.isNotEmpty() && !candidate.contains(' ')) return candidate
-    }
-    return null
 }

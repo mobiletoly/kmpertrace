@@ -10,7 +10,7 @@ private class LoggingBindingElement(val value: LoggingBinding) : CoroutineContex
 
 private var currentBinding: LoggingBinding = LoggingBinding.Unbound // JS/Wasm is single-threaded, so a plain var works
 
-actual object LoggingBindingStorage {
+internal actual object LoggingBindingStorage {
     actual fun get(): LoggingBinding = currentBinding
     actual fun set(value: LoggingBinding) {
         currentBinding = value

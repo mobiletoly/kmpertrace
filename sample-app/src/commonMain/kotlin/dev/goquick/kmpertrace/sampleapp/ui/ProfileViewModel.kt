@@ -31,7 +31,11 @@ class ProfileViewModel(
         log.d { "refreshAll called for $userId" }
         log.i { "starting now" }
         scope.launch {
-            traceSpan(component = "ProfileViewModel", operation = "refreshAll", attributes = mapOf("userId" to userId)) {
+            traceSpan(
+                component = "ProfileViewModel",
+                operation = "refreshAll",
+                attributes = mapOf("?userId" to userId)
+            ) {
                 state = state.copy(
                     profile = LoadState.Loading,
                     contacts = LoadState.Loading,
@@ -46,7 +50,8 @@ class ProfileViewModel(
                         activity = LoadState.Success(result.activity),
                         lastRefreshed = "just now"
                     )
-                    log.withOperation("refreshAll").d { "Profile=${result.profile.name}, contacts=${result.contacts.size}, activity=${result.activity.size}" }
+                    log.withOperation("refreshAll")
+                        .d { "Profile=${result.profile.name}, contacts=${result.contacts.size}, activity=${result.activity.size}" }
                     log.withOperation("refreshAll").i { "Refresh complete for $userId" }
                 } catch (t: Throwable) {
                     log.withOperation("refreshAll").e(throwable = t) { "Refresh failed: ${t.message}" }
@@ -63,7 +68,11 @@ class ProfileViewModel(
 
     fun refreshActivityOnly(userId: String = DEFAULT_USER_ID) {
         scope.launch {
-            traceSpan(component = "ProfileViewModel", operation = "refreshActivity", attributes = mapOf("userId" to userId)) {
+            traceSpan(
+                component = "ProfileViewModel",
+                operation = "refreshActivity",
+                attributes = mapOf("userId" to userId)
+            ) {
                 state = state.copy(activity = LoadState.Loading)
                 runCatching { repo.loadActivity(userId) }
                     .onSuccess { events ->
@@ -101,7 +110,11 @@ class ProfileViewModel(
             )
         )
         scope.launch {
-            traceSpan(component = "ProfileViewModel", operation = "download-$label", attributes = mapOf("jobId" to jobId, "label" to label)) {
+            traceSpan(
+                component = "ProfileViewModel",
+                operation = "download-$label",
+                attributes = mapOf("jobId" to jobId, "label" to label)
+            ) {
                 runCatching {
                     downloader.download(label = label, totalChunks = 3, chunkDelayMs = 500) { percent ->
                         state = state.copy(
@@ -130,7 +143,11 @@ class ProfileViewModel(
     fun triggerFailure(userId: String = DEFAULT_USER_ID) {
         scope.launch {
             try {
-                traceSpan(component = "ProfileViewModel", operation = "simulateFailure", attributes = mapOf("userId" to userId)) {
+                traceSpan(
+                    component = "ProfileViewModel",
+                    operation = "simulateFailure",
+                    attributes = mapOf("userId" to userId)
+                ) {
                     log.withOperation("simulateFailure").w { "Simulated failure about to throw for $userId" }
                     throw IllegalStateException("Simulated failure for $userId")
                 }

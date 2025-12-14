@@ -1,9 +1,9 @@
 package dev.goquick.kmpertrace.core
 
 /**
- * Structured event kind used in log output.
+ * Structured log record kind used in log output.
  */
-enum class EventKind {
+enum class LogRecordKind {
     SPAN_START,
     SPAN_END,
     LOG

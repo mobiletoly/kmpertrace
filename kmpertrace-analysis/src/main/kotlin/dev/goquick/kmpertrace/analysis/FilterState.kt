@@ -1,6 +1,6 @@
 package dev.goquick.kmpertrace.analysis
 
-import dev.goquick.kmpertrace.parse.ParsedEvent
+import dev.goquick.kmpertrace.parse.ParsedLogRecord
 
 /**
  * Mutable filter state to be shared between analysis core and UI.
@@ -13,7 +13,7 @@ data class FilterState(
     val text: String? = null,
     val excludeUntraced: Boolean = false
 ) {
-    fun predicate(): (ParsedEvent) -> Boolean = { evt ->
+    fun predicate(): (ParsedLogRecord) -> Boolean = { evt ->
         when {
             excludeUntraced && evt.traceId == "0" -> false
             traceId != null && evt.traceId != traceId -> false

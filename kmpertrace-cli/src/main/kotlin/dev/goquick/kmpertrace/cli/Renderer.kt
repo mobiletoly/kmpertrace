@@ -4,37 +4,51 @@ import dev.goquick.kmpertrace.cli.ansi.AnsiPalette
 import dev.goquick.kmpertrace.cli.ansi.maybeColor
 import dev.goquick.kmpertrace.cli.ansi.maybeColorBold
 import dev.goquick.kmpertrace.cli.ansi.stripAnsi
-import dev.goquick.kmpertrace.parse.EventKind
-import dev.goquick.kmpertrace.parse.ParsedEvent
+import dev.goquick.kmpertrace.parse.LogRecordKind
+import dev.goquick.kmpertrace.parse.ParsedLogRecord
 import dev.goquick.kmpertrace.parse.SpanNode
 import dev.goquick.kmpertrace.parse.TraceTree
 import java.time.Instant
-import java.time.ZoneOffset
+import java.time.LocalDateTime
+import java.time.Year
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatterBuilder
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoField
 
 internal fun renderTraces(
     traces: List<TraceTree>,
-    untracedEvents: List<ParsedEvent> = emptyList(),
+    untracedRecords: List<ParsedLogRecord> = emptyList(),
     showSource: Boolean = false,
     maxLineWidth: Int? = null,
     colorize: Boolean = false,
-    timeFormat: TimeFormat = TimeFormat.TIME_ONLY
+    timeFormat: TimeFormat = TimeFormat.TIME_ONLY,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+    spanAttrsMode: SpanAttrsMode = SpanAttrsMode.OFF
 ): String {
     val sb = StringBuilder()
 
     val timeline = mutableListOf<TimelineItem>()
     traces.forEach { trace ->
-        timeline += TimelineItem(traceTimestamp(trace), true) { sbInner ->
-            renderTrace(sbInner, trace, showSource, maxLineWidth, colorize, timeFormat)
+        val ts = traceTimestamp(trace)
+        timeline += TimelineItem(parseTimestampToInstant(ts, zoneId), ts) { sbInner ->
+            renderTrace(sbInner, trace, showSource, maxLineWidth, colorize, timeFormat, zoneId, spanAttrsMode)
         }
     }
-    untracedEvents.forEach { event ->
-        timeline += TimelineItem(event.timestamp, false) { sbInner ->
-            renderUntraced(sbInner, event, showSource, maxLineWidth, colorize, timeFormat)
+    untracedRecords.forEach { record ->
+        timeline += TimelineItem(parseTimestampToInstant(record.timestamp, zoneId), record.timestamp) { sbInner ->
+            renderUntraced(sbInner, record, showSource, maxLineWidth, colorize, timeFormat, zoneId)
         }
     }
 
-    val sorted = timeline.sortedWith(compareBy<TimelineItem> { it.timestamp == null }.thenBy { it.timestamp })
+    val sorted =
+        timeline.sortedWith(
+            compareBy<TimelineItem> { it.instant == null }
+                .thenBy { it.instant }
+                .thenBy { it.rawTimestamp == null }
+                .thenBy { it.rawTimestamp }
+        )
     sorted.forEach { item ->
         if (sb.isNotEmpty()) sb.appendLine()
         item.render(sb)
@@ -43,7 +57,11 @@ internal fun renderTraces(
     return sb.toString().trimEnd()
 }
 
-private data class TimelineItem(val timestamp: String?, val isTrace: Boolean, val render: (StringBuilder) -> Unit)
+private data class TimelineItem(
+    val instant: Instant?,
+    val rawTimestamp: String?,
+    val render: (StringBuilder) -> Unit
+)
 
 private fun trimCommonIndent(lines: List<String>): List<String> {
     if (lines.size <= 1) return lines
@@ -63,7 +81,9 @@ private fun renderTrace(
     showSource: Boolean,
     maxLineWidth: Int?,
     colorize: Boolean,
-    timeFormat: TimeFormat
+    timeFormat: TimeFormat,
+    zoneId: ZoneId,
+    spanAttrsMode: SpanAttrsMode
 ) {
     val header = "trace ${trace.traceId}"
     sb.append(maybeColor(header, AnsiPalette.header, colorize)).appendLine()
@@ -76,28 +96,31 @@ private fun renderTrace(
             showSource = showSource,
             maxLineWidth = maxLineWidth,
             colorize = colorize,
-            timeFormat = timeFormat
+            timeFormat = timeFormat,
+            zoneId = zoneId,
+            spanAttrsMode = spanAttrsMode
         )
     }
 }
 
 private fun renderUntraced(
     sb: StringBuilder,
-    event: ParsedEvent,
+    record: ParsedLogRecord,
     showSource: Boolean,
     maxLineWidth: Int?,
     colorize: Boolean,
-    timeFormat: TimeFormat
+    timeFormat: TimeFormat,
+    zoneId: ZoneId
 ) {
-    val ts = formatTimestamp(event.timestamp, timeFormat)
-    val logger = event.loggerName ?: "-"
-    val msg = event.message ?: ""
-    val lvl = event.rawFields["lvl"]?.lowercase()
-    val isErrorish = event.rawFields["status"] == "ERROR" || event.rawFields["throwable"] != null || lvl == "error" || lvl == "assert"
-    val glyph = if (isErrorish) "❌" else levelGlyph(event.rawFields["lvl"])
+    val ts = formatTimestamp(record.timestamp, timeFormat, zoneId)
+    val logger = record.loggerName ?: "-"
+    val msg = record.message ?: ""
+    val lvl = record.rawFields["lvl"]?.lowercase()
+    val isErrorish = record.rawFields["status"] == "ERROR" || record.rawFields["throwable"] != null || lvl == "error" || lvl == "assert"
+    val glyph = if (isErrorish) "❌" else levelGlyph(record.rawFields["lvl"])
     val prefix = "• $glyph "
     val continuationPrefix = "   "
-    val isRaw = event.rawFields["raw"] == "true"
+    val isRaw = record.rawFields["raw"] == "true"
     val loggerColored = if (isRaw) {
         maybeColor(logger, AnsiPalette.timestamp, colorize)
     } else {
@@ -113,9 +136,9 @@ private fun renderUntraced(
         append(maybeColor(ts, AnsiPalette.timestamp, colorize)).append(' ')
         append(loggerColored).append(": ").append(if (isRaw) maybeColor(firstLineColored, AnsiPalette.timestamp, colorize) else firstLineColored)
         if (showSource) {
-            val logSource = buildSourceHint(event.sourceComponent, event.sourceOperation, event.sourceLocationHint)
+            val logSource = buildSourceHint(record.sourceComponent, record.sourceOperation, record.sourceLocationHint)
             if (logSource != null) append(" [").append(maybeColor(logSource, AnsiPalette.source, colorize)).append(']')
-            val loc = buildLocationSuffix(event.sourceFile, event.sourceLine, event.sourceFunction)
+            val loc = buildLocationSuffix(record.sourceFile, record.sourceLine, record.sourceFunction)
             if (loc != null) append(' ').append(maybeColor(loc, AnsiPalette.location, colorize))
         }
     }
@@ -127,7 +150,7 @@ private fun renderUntraced(
                 softWrap = true)
         }
     }
-    event.rawFields["stack_trace"]?.let { stack ->
+    record.rawFields["stack_trace"]?.let { stack ->
         val decoded = decodeStackTrace(stack)
         val stackLines = decoded.lines().filter { it.isNotEmpty() }
         stackLines.forEach { line ->
@@ -138,7 +161,7 @@ private fun renderUntraced(
 }
 
 private fun traceTimestamp(trace: TraceTree): String? =
-    trace.spans.mapNotNull { it.firstTimestamp() }.minOrNull()
+    trace.spans.mapNotNull { it.startTimestamp ?: it.firstTimestamp() }.minOrNull()
 
 private fun renderSpan(
     sb: StringBuilder,
@@ -148,12 +171,14 @@ private fun renderSpan(
     showSource: Boolean,
     maxLineWidth: Int?,
     colorize: Boolean,
-    timeFormat: TimeFormat
+    timeFormat: TimeFormat,
+    zoneId: ZoneId,
+    spanAttrsMode: SpanAttrsMode
 ) {
     val connector = if (isLast) "└─" else "├─"
     val durationPart = span.durationMs?.let { " (${it} ms)" } ?: ""
     val spanSourceHint = if (showSource) buildSourceHint(span.sourceComponent, span.sourceOperation, span.sourceLocationHint) else null
-    val spanHasError = span.events.any { it.eventKind == EventKind.SPAN_END && (it.rawFields["status"] == "ERROR" || it.rawFields["throwable"] != null) }
+    val spanHasError = span.records.any { it.logRecordKind == LogRecordKind.SPAN_END && (it.rawFields["status"] == "ERROR" || it.rawFields["throwable"] != null) }
     val spanPrefix = prefix + connector + ' '
     val continuationPrefixForSpan = prefix + if (isLast) "   " else "│  "
     val spanContent = buildString {
@@ -165,13 +190,16 @@ private fun renderSpan(
         if (spanSourceHint != null && spanSourceHint != span.spanName) {
             append(" [").append(maybeColor(spanSourceHint, AnsiPalette.source, colorize)).append(']')
         }
+        formatSpanAttrs(span.attributes, spanAttrsMode)?.let { attrs ->
+            append(' ').append(maybeColor(attrs, AnsiPalette.timestamp, colorize))
+        }
     }
     appendWrappedLine(sb, spanPrefix, spanContent, maxLineWidth, continuationPrefixForSpan)
 
     val childPrefix = prefix + if (isLast) "   " else "│  "
 
     val items = mutableListOf<SpanRenderable>()
-    span.events.forEach { items += SpanRenderable.EventItem(it) }
+    span.records.forEach { items += SpanRenderable.RecordItem(it) }
     span.children.forEach { child ->
         val childTs = child.startTimestamp ?: child.firstTimestamp()
         items += SpanRenderable.ChildItem(child, childTs)
@@ -182,15 +210,15 @@ private fun renderSpan(
             val isLastItem = idx == sortedItems.lastIndex
             val connectorItem = if (isLastItem) "└─" else "├─"
             val connectorPad = if (isLastItem) "   " else "│  "
-            when (item) {
-                is SpanRenderable.EventItem -> {
-                    val event = item.event
-                    val ts = formatTimestamp(event.timestamp, timeFormat)
-                    val logger = event.loggerName ?: "-"
-                    val msg = event.message?.let { massageSpanMarker(event, it) } ?: ""
-                    val lvl = event.rawFields["lvl"]?.lowercase()
-                    val isErrorish = event.rawFields["status"] == "ERROR" || event.rawFields["throwable"] != null || lvl == "error" || lvl == "assert"
-                    val glyph = if (isErrorish) "❌" else levelGlyph(event.rawFields["lvl"])
+                when (item) {
+                    is SpanRenderable.RecordItem -> {
+                        val record = item.record
+                val ts = formatTimestamp(record.timestamp, timeFormat, zoneId)
+                val logger = record.loggerName ?: "-"
+                val msg = record.message?.let { massageSpanMarker(record, it) } ?: ""
+                val lvl = record.rawFields["lvl"]?.lowercase()
+                val isErrorish = record.rawFields["status"] == "ERROR" || record.rawFields["throwable"] != null || lvl == "error" || lvl == "assert"
+                        val glyph = if (isErrorish) "❌" else levelGlyph(record.rawFields["lvl"])
                     val logPrefix = "$childPrefix$connectorItem $glyph "
                     val glyphPad = "    " // space + glyph + space + trailing space
                     val continuationPrefixForLog = childPrefix + connectorPad + glyphPad
@@ -202,17 +230,17 @@ private fun renderSpan(
                 val firstLineMsg = messageLines.firstOrNull().orEmpty()
                 val firstLineColored = if (isErrorish) maybeColor(firstLineMsg, AnsiPalette.error, colorize) else firstLineMsg
 
-                val firstLineContent = buildString {
-                    append(maybeColor(ts, AnsiPalette.timestamp, colorize)).append(' ')
-                    append(loggerColored).append(": ").append(firstLineColored)
-                    if (showSource) {
-                        val logSource = buildSourceHint(event.sourceComponent, event.sourceOperation, event.sourceLocationHint)
-                        val sourceToShow = if (logSource != null && logSource != spanSourceHint) logSource else null
-                        if (sourceToShow != null) append(" [").append(maybeColor(sourceToShow, AnsiPalette.source, colorize)).append(']')
-                        val loc = buildLocationSuffix(event.sourceFile, event.sourceLine, event.sourceFunction)
-                        if (loc != null) append(' ').append(maybeColor(loc, AnsiPalette.location, colorize))
+                    val firstLineContent = buildString {
+                        append(maybeColor(ts, AnsiPalette.timestamp, colorize)).append(' ')
+                        append(loggerColored).append(": ").append(firstLineColored)
+                        if (showSource) {
+                            val logSource = buildSourceHint(record.sourceComponent, record.sourceOperation, record.sourceLocationHint)
+                            val sourceToShow = if (logSource != null && logSource != spanSourceHint) logSource else null
+                            if (sourceToShow != null) append(" [").append(maybeColor(sourceToShow, AnsiPalette.source, colorize)).append(']')
+                            val loc = buildLocationSuffix(record.sourceFile, record.sourceLine, record.sourceFunction)
+                            if (loc != null) append(' ').append(maybeColor(loc, AnsiPalette.location, colorize))
+                        }
                     }
-                }
                 appendWrappedLine(sb, logPrefix, firstLineContent, maxLineWidth, continuationPrefixForLog,
                     softWrap = true)
 
@@ -224,16 +252,16 @@ private fun renderSpan(
                     }
                 }
 
-                event.rawFields["stack_trace"]?.let { stack ->
-                    val decoded = decodeStackTrace(stack)
-                    val stackLines = decoded.lines().filter { it.isNotEmpty() }
-                    val stackPrefix = childPrefix + connectorPad + glyphPad
-                    stackLines.forEach { line ->
-                        val coloredLine = if (isErrorish) maybeColor(line, AnsiPalette.error, colorize) else line
-                        appendWrappedLine(sb, stackPrefix, coloredLine, maxLineWidth, stackPrefix)
+                    record.rawFields["stack_trace"]?.let { stack ->
+                        val decoded = decodeStackTrace(stack)
+                        val stackLines = decoded.lines().filter { it.isNotEmpty() }
+                        val stackPrefix = childPrefix + connectorPad + glyphPad
+                        stackLines.forEach { line ->
+                            val coloredLine = if (isErrorish) maybeColor(line, AnsiPalette.error, colorize) else line
+                            appendWrappedLine(sb, stackPrefix, coloredLine, maxLineWidth, stackPrefix)
+                        }
                     }
                 }
-            }
             is SpanRenderable.ChildItem -> {
                 renderSpan(
                     sb,
@@ -243,20 +271,56 @@ private fun renderSpan(
                     showSource,
                     maxLineWidth,
                     colorize,
-                    timeFormat
+                    timeFormat,
+                    zoneId,
+                    spanAttrsMode
                 )
             }
         }
     }
 }
 
+private fun formatSpanAttrs(attributes: Map<String, String>, mode: SpanAttrsMode): String? {
+    if (mode == SpanAttrsMode.OFF) return null
+    if (attributes.isEmpty()) return null
+
+    val entries = attributes.entries.toList()
+    val pairs = entries.joinToString(" ") { (k, v) ->
+        "${stripAttrPrefix(k)}=${formatAttrValue(v)}"
+    }
+    return "{$pairs}"
+}
+
+private fun stripAttrPrefix(key: String): String =
+    when {
+        key.startsWith(DEBUG_ATTRIBUTE_PREFIX) -> DEBUG_DISPLAY_PREFIX + key.removePrefix(DEBUG_ATTRIBUTE_PREFIX)
+        key.startsWith(ATTRIBUTE_PREFIX) -> key.removePrefix(ATTRIBUTE_PREFIX)
+        else -> key
+    }
+
+private fun formatAttrValue(value: String): String {
+    val needsQuotes = value.any { it.isWhitespace() } || value.contains('"')
+    if (!needsQuotes) return value
+    return buildString {
+        append('"')
+        value.forEach { ch ->
+            if (ch == '"') append("\\\"") else append(ch)
+        }
+        append('"')
+    }
+}
+
+private const val ATTRIBUTE_PREFIX = "a:"
+private const val DEBUG_ATTRIBUTE_PREFIX = "d:"
+private const val DEBUG_DISPLAY_PREFIX = "?"
+
 private sealed class SpanRenderable(open val timestamp: String?) {
-    data class EventItem(val event: ParsedEvent) : SpanRenderable(event.timestamp)
+    data class RecordItem(val record: ParsedLogRecord) : SpanRenderable(record.timestamp)
     data class ChildItem(val child: SpanNode, override val timestamp: String?) : SpanRenderable(timestamp)
 }
 
 private fun SpanNode.firstTimestamp(): String? =
-    events.mapNotNull { it.timestamp }.minOrNull()
+    records.mapNotNull { it.timestamp }.minOrNull()
         ?: children.mapNotNull { it.firstTimestamp() }.minOrNull()
 
 private fun buildSourceHint(component: String?, operation: String?, hint: String?): String? =
@@ -406,13 +470,13 @@ private fun decodeStackTrace(raw: String): String {
 }
 
 // Drop span start/end marker heads ("+++ name" / "--- name") from rendering,
-// preferring error_message for span-end errors when present.
-private fun massageSpanMarker(event: ParsedEvent, msg: String): String {
-    if (event.eventKind == EventKind.SPAN_START || event.eventKind == EventKind.SPAN_END) {
+// preferring err_msg for span-end errors when present.
+private fun massageSpanMarker(record: ParsedLogRecord, msg: String): String {
+    if (record.logRecordKind == LogRecordKind.SPAN_START || record.logRecordKind == LogRecordKind.SPAN_END) {
         val trimmed = msg.trim()
         if (trimmed.startsWith("+++ ") || trimmed.startsWith("--- ")) {
-            val errMsg = event.rawFields["error_message"]?.takeIf { it.isNotBlank() }
-            if (event.eventKind == EventKind.SPAN_END && errMsg != null) return errMsg
+            val errMsg = record.rawFields["err_msg"]?.takeIf { it.isNotBlank() }
+            if (record.logRecordKind == LogRecordKind.SPAN_END && errMsg != null) return errMsg
             return "" // suppress marker
         }
     }
@@ -432,12 +496,25 @@ private fun buildLocationSuffix(file: String?, line: Int?, fn: String?): String?
 private const val WORD_OVERFLOW_BUDGET = 12
 
 internal fun formatTimestamp(raw: String?, format: TimeFormat): String {
+    return formatTimestamp(raw, format, ZoneId.systemDefault())
+}
+
+internal fun formatTimestamp(raw: String?, format: TimeFormat, zoneId: ZoneId): String {
     val value = raw ?: return ""
 
     // ISO-like with 'T'
     val tIdx = value.indexOf('T')
     if (tIdx != -1 && tIdx != value.lastIndex) {
         if (format == TimeFormat.FULL) return value
+        // Convert ISO timestamps with Z/offset to local time.
+        val hasZone = value.endsWith('Z') || value.indexOfAny(charArrayOf('+', '-'), startIndex = tIdx + 1) != -1
+        if (hasZone) {
+            val instant = runCatching { Instant.parse(value) }.getOrNull()
+            if (instant != null) {
+                return DateTimeFormatter.ofPattern("HH:mm:ss.SSS").withZone(zoneId).format(instant)
+            }
+        }
+        // Fallback: best-effort extraction without zone conversion.
         val endIdx = value.indexOfAny(charArrayOf('Z', '+', '-'), startIndex = tIdx + 1).let { if (it == -1) value.length else it }
         val timePortion = value.substring(tIdx + 1, endIdx)
         return normalizeTimePortion(timePortion)
@@ -448,7 +525,7 @@ internal fun formatTimestamp(raw: String?, format: TimeFormat): String {
         val instant = parseEpochSeconds(value) ?: return value
         return when (format) {
             TimeFormat.FULL -> DateTimeFormatter.ISO_INSTANT.format(instant)
-            TimeFormat.TIME_ONLY -> DateTimeFormatter.ofPattern("HH:mm:ss.SSS").withZone(ZoneOffset.UTC).format(instant)
+            TimeFormat.TIME_ONLY -> DateTimeFormatter.ofPattern("HH:mm:ss.SSS").withZone(zoneId).format(instant)
         }
     }
 
@@ -496,4 +573,52 @@ private fun parseEpochSeconds(value: String): Instant? {
     } catch (_: Exception) {
         null
     }
+}
+
+private fun parseTimestampToInstant(raw: String?, zoneId: ZoneId): Instant? {
+    val value = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+
+    // Epoch seconds (with optional millis), e.g., logcat -v epoch
+    if (value.matches(Regex("^\\d{10}(?:\\.\\d+)?$"))) {
+        return parseEpochSeconds(value)
+    }
+
+    // ISO instant with zone/offset (what KmperTrace structured logs emit).
+    if (value.indexOf('T') != -1) {
+        runCatching { Instant.parse(value) }.getOrNull()?.let { return it }
+    }
+
+    // Android Studio style: "yyyy-MM-dd HH:mm:ss.SSS" (assume local zone)
+    Regex("^\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d+$").matchEntire(value)?.let {
+        val normalized = value.replace(' ', 'T')
+        val ldt = runCatching { LocalDateTime.parse(normalized) }.getOrNull()
+        return ldt?.atZone(zoneId)?.toInstant()
+    }
+
+    // iOS syslog style: "yyyy-MM-dd HH:mm:ss.SSSSSS-0500"
+    Regex("^\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d+(?:[+-]\\d{4})$").matchEntire(value)?.let {
+        val normalized = value.replace(' ', 'T')
+        val fmt = DateTimeFormatterBuilder()
+            .appendPattern("yyyy-MM-dd'T'HH:mm:ss")
+            .appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true)
+            .appendOffset("+HHmm", "Z")
+            .toFormatter()
+        return runCatching { ZonedDateTime.parse(normalized, fmt).toInstant() }.getOrNull()
+    }
+
+    // Logcat month-day format "MM-DD HH:mm:ss.SSS" (assume current year + local zone)
+    Regex("^(\\d{2})-(\\d{2})\\s+(\\d{2}):(\\d{2}):(\\d{2})\\.(\\d+)$").matchEntire(value)?.let { m ->
+        val year = Year.now(zoneId).value
+        val month = m.groupValues[1].toInt()
+        val day = m.groupValues[2].toInt()
+        val hour = m.groupValues[3].toInt()
+        val minute = m.groupValues[4].toInt()
+        val second = m.groupValues[5].toInt()
+        val ms = m.groupValues[6].padEnd(3, '0').take(3).toInt()
+        return runCatching {
+            LocalDateTime.of(year, month, day, hour, minute, second, ms * 1_000_000).atZone(zoneId).toInstant()
+        }.getOrNull()
+    }
+
+    return null
 }

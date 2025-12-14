@@ -10,12 +10,12 @@ class AnalysisEngineMessagePreferenceTest {
     fun `prefers parsed message over truncated head`() {
         val engine = AnalysisEngine()
         val rawLine =
-            """12-08 00:54:42.528  5330  5330 D Downloader: Download DownloadA progress 33% (jobId=-123) |{ ts=2025-12-08T23:05:29.500817Z lvl=debug trace=trace-1 span=span-1 parent=parent-1 ev=LOG head="Download Downlo" src=Downloader/DownloadA log=Downloader thread="main" }|"""
+            """12-08 00:54:42.528  5330  5330 D Downloader: Download DownloadA progress 33% (jobId=-123) |{ ts=2025-12-08T23:05:29.500817Z lvl=debug trace=trace-1 span=span-1 parent=parent-1 kind=LOG head="Download Downlo" src=Downloader/DownloadA log=Downloader thread="main" }|"""
 
         engine.onLine(rawLine)
         val snapshot = engine.snapshot()
         assertTrue(snapshot.traces.isNotEmpty(), "trace should be parsed")
-        val event = snapshot.traces.first().spans.first().events.first()
-        assertEquals("Download DownloadA progress 33% (jobId=-123)", event.message)
+        val record = snapshot.traces.first().spans.first().records.first()
+        assertEquals("Download DownloadA progress 33% (jobId=-123)", record.message)
     }
 }

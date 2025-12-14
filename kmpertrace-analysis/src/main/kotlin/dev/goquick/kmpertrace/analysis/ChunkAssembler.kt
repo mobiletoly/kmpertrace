@@ -36,4 +36,8 @@ class ChunkAssembler {
             else -> emptyList()
         }
     }
+
+    fun reset() {
+        buffers.clear()
+    }
 }

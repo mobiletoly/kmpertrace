@@ -1,12 +1,13 @@
 package dev.goquick.kmpertrace.log
 
 import dev.goquick.kmpertrace.core.Level
-import dev.goquick.kmpertrace.core.LogEvent
 
 /**
- * Global runtime configuration for KmperTrace logging.
+ * Internal runtime configuration for KmperTrace logging/tracing.
+ *
+ * Public configuration should go through [KmperTrace].
  */
-object LoggerConfig {
+internal object LoggerConfig {
 
     /**
      * Minimum level allowed through filtering.
@@ -14,29 +15,38 @@ object LoggerConfig {
     var minLevel: Level = Level.DEBUG
 
     /**
-     * Service name recorded on each event when provided.
+     * Service name recorded on each log record when provided.
      */
     var serviceName: String? = null
 
     /**
-     * Environment name recorded on each event when provided.
+     * Environment name recorded on each log record when provided.
      */
     var environment: String? = null
 
     /**
-     * Active backends; empty list disables emission.
+     * Active sinks; empty list disables emission.
      */
-    var backends: List<LogBackend> = emptyList()
+    var sinks: List<LogSink> = emptyList()
 
     /**
-     * Whether platform backends should render glyph icons (e.g., ℹ️/⚠️/❌) before lines.
+     * Whether platform sinks should render glyph icons (e.g., ℹ️/⚠️/❌) before lines.
      */
     var renderGlyphs: Boolean = true
 
     /**
-     * Additional filter predicate evaluated before dispatch.
+     * Whether debug span attributes should be emitted into log lines.
+     *
+     * This is intended for dev-only or sensitive fields you don't want written to logs in release builds.
+     * Public APIs mark debug attributes with a leading `?` in the key, and they are emitted on `SPAN_END`
+     * as fields whose keys start with `d:`.
+     *
+     * When disabled, any span attributes whose keys start with `d:` are dropped before emission.
      */
-    var filter: (LogEvent) -> Boolean = { event ->
-        event.level.ordinal >= minLevel.ordinal
-    }
+    var emitDebugAttributes: Boolean = false
+
+    /**
+     * Additional filter predicate evaluated before emitting to sinks.
+     */
+    var filter: (LogRecord) -> Boolean = { true }
 }

@@ -17,7 +17,7 @@ reconstructed from plain log output.*
 ## What KmperTrace gives you
 
 - **End‑to‑end traces from just logs.**  
-  No agents, no collectors: KmperTrace encodes `trace_id`/`span_id` and span events into log lines
+  No agents, no collectors: KmperTrace encodes `trace`/`span` IDs and span start/end markers into log lines
   that can be shipped with whatever logging pipeline you already use.
 
 - **Consistent tracing across KMP targets.**  
@@ -32,9 +32,9 @@ reconstructed from plain log output.*
   A CLI (`kmpertrace-cli`) that can ingest a flat logfile and render readable trace trees, plus a
   sample Compose Multiplatform app that demonstrates end‑to‑end flow.
 
-- **Pluggable backends.**  
+- **Pluggable sinks.**  
   Platform‑native log sinks by default (Logcat, NSLog/`print`, stdout/console), with hooks to add
-  your own `LogBackend` implementations.
+  your own `LogSink` implementations.
 
 ---
 
@@ -49,7 +49,7 @@ reconstructed from plain log output.*
 - `kmpertrace-cli/`  
   JVM CLI that:
     - reads structured KmperTrace log lines from a file or stdin,
-    - groups them by `trace_id`,
+    - groups them by `trace`,
     - reconstructs span trees, and
     - renders them as a readable text UI (as shown in the screenshot above).
 
@@ -102,7 +102,7 @@ reconstructed from plain log output.*
    }
    ```
 
-   All logs inside `traceSpan { ... }` will carry `trace_id`/`span_id` so the CLI can reconstruct
+   All logs inside `traceSpan { ... }` will carry `trace`/`span` IDs so the CLI can reconstruct
    the tree.
 
 
@@ -155,7 +155,7 @@ reconstructed from plain log output.*
 
 6. **Visualize with the CLI (interactive mode)**
 
-   We have experimental interactive mode in kmpertrace-cli. E.g. to run it for adb events you can
+   We have experimental interactive mode in kmpertrace-cli. E.g. to run it for adb logs you can
    run:
 
    ```bash
@@ -179,6 +179,28 @@ reconstructed from plain log output.*
    See `docs/CLI-UserGuide.md` for current flags and interactive keys.
 
 ---
+
+## Attributes
+
+Spans can have key/value **attributes** that show up next to span names in the CLI (useful for small,
+high-signal identifiers like `jobId`, `http.status`, `cache.hit`).
+
+- **Normal vs debug attributes**
+  - Pass attributes with plain keys via APIs (no prefix): `attributes = mapOf("jobId" to "123")`.
+  - Mark a **debug-only** attribute by prefixing the key with `?`: `attributes = mapOf("?userEmail" to "a@b.com")`.
+  - Debug attributes are only emitted when `KmperTrace.configure(emitDebugAttributes = true)`.
+
+- **CLI rendering**
+  - Print mode: add `--span-attrs on`
+  - Interactive TUI: press `a` (status bar shows `[a] attrs=off|on`)
+  - Debug attributes render with a `?` prefix (e.g. `?userEmail=a@b.com`).
+
+- **Wire format and key rules**
+  - In raw structured logs, attributes are encoded as `a:<key>` (normal) and `d:<key>` (debug).
+  - Keys are restricted to `[A-Za-z0-9_.-]` (after optional leading `?`); invalid keys are emitted
+    as `invalid_<...>` with invalid characters replaced by `_`.
+
+For more details, see `docs/Tracing.md`.
 
 ## Example: Logged Download Flow (Ktor)
 
@@ -226,7 +248,7 @@ private suspend fun downloadAndParse(client: HttpClient, url: String) =
     }
 ```
 
-Every log line inside `traceSpan` carries `trace_id`/`span_id`; the CLI can reconstruct the full
+Every log line inside `traceSpan` carries `trace`/`span` IDs; the CLI can reconstruct the full
 flow when you collect logs from your app.
 
 Sample output from the CLI will look like this in case of success:
@@ -267,4 +289,4 @@ or it will look like this in case of failure:
 ## Status
 
 KmperTrace is early‑stage and APIs may change before `1.0`. Feedback, issues, and ideas for
-integrations (backends, exporters, IDE plugins) are very welcome.
+integrations (sinks, exporters, IDE plugins) are very welcome.

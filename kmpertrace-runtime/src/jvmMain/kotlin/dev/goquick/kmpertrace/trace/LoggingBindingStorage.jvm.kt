@@ -21,7 +21,7 @@ private class LoggingBindingElement(private val value: LoggingBinding) : ThreadC
     }
 }
 
-actual object LoggingBindingStorage {
+internal actual object LoggingBindingStorage {
     actual fun get(): LoggingBinding = bindingLocal.get()
     actual fun set(value: LoggingBinding) {
         bindingLocal.set(value)

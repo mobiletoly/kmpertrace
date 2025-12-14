@@ -1,12 +1,11 @@
 package dev.goquick.kmpertrace.platform
 
-import dev.goquick.kmpertrace.core.EventKind
+import dev.goquick.kmpertrace.core.LogRecordKind
 import dev.goquick.kmpertrace.core.Level
-import dev.goquick.kmpertrace.core.LogEvent
+import dev.goquick.kmpertrace.core.StructuredLogRecord
 import dev.goquick.kmpertrace.log.currentThreadNameOrNull
 import kotlin.time.Instant
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -19,7 +18,7 @@ class IosPlatformBackendTest {
 
     @Test
     fun formatLogLine_defaults_unknown_thread_when_none() {
-        val event = LogEvent(
+        val record = StructuredLogRecord(
             timestamp = Instant.parse("2025-01-02T03:04:05Z"),
             level = Level.INFO,
             loggerName = "IosLogger",
@@ -27,7 +26,7 @@ class IosPlatformBackendTest {
             traceId = null,
             spanId = null,
             parentSpanId = null,
-            eventKind = EventKind.LOG,
+            logRecordKind = LogRecordKind.LOG,
             spanName = null,
             durationMs = null,
             threadName = null,
@@ -35,7 +34,7 @@ class IosPlatformBackendTest {
             environment = null
         )
 
-        val rendered = formatLogLine(event)
+        val rendered = formatLogLine(record)
         assertTrue(rendered.contains("|{ ts=2025-01-02T03:04:05Z"))
         assertTrue(rendered.contains("""head="msg""""))
         assertTrue(rendered.contains("log=IosLogger"))
@@ -43,59 +42,67 @@ class IosPlatformBackendTest {
 
     @Test
     fun platform_backend_prints_human_prefix() {
-        val event = LogEvent(
+        val record = StructuredLogRecord(
             timestamp = Instant.parse("2025-01-02T03:04:05Z"),
             level = Level.INFO,
             loggerName = "IosLogger",
             message = "hello",
-            eventKind = EventKind.LOG
+            logRecordKind = LogRecordKind.LOG
         )
 
         // On iOS tests, just ensure formatting returns the structured suffix.
-        val rendered = formatLogLine(event)
+        val rendered = formatLogLine(record)
         assertTrue(rendered.contains("|{ ts="))
     }
 
     @Test
     fun formatLogLine_includes_error_fields_and_stack() {
-        val event = LogEvent(
+        val record = StructuredLogRecord(
             timestamp = Instant.parse("2025-01-02T03:04:05Z"),
             level = Level.ERROR,
             loggerName = "IosLogger",
             message = "failed",
             traceId = "trace-ios",
             spanId = "span-ios",
-            eventKind = EventKind.SPAN_END,
+            logRecordKind = LogRecordKind.SPAN_END,
             spanName = "op",
             durationMs = 1,
             attributes = mapOf(
                 "status" to "ERROR",
-                "error_type" to "IllegalStateException",
-                "error_message" to "boom"
+                "err_type" to "IllegalStateException",
+                "err_msg" to "boom"
             ),
             throwable = IllegalStateException("boom")
         )
 
-        val rendered = formatLogLine(event)
+        val rendered = formatLogLine(record)
         assertTrue(rendered.contains("""status="ERROR""""))
-        assertTrue(rendered.contains("""error_type="IllegalStateException""""))
-        assertTrue(rendered.contains("""error_message="boom""""))
+        assertTrue(rendered.contains("""err_type="IllegalStateException""""))
+        assertTrue(rendered.contains("""err_msg="boom""""))
         assertTrue(rendered.contains("""stack_trace="""))
     }
 
     @Test
-    fun platform_backend_handles_percent_signs_without_crash() {
-        val event = LogEvent(
-            timestamp = Instant.parse("2025-01-02T03:04:05Z"),
-            level = Level.INFO,
-            loggerName = "IosLogger",
-            message = "progress 50% and 100%",
-            eventKind = EventKind.LOG,
-            throwable = IllegalStateException("boom for 100%")
+    fun platform_backend_escapes_percent_signs_for_nslog_format_string() {
+        val raw = "progress 50% and 100% (boom for 100%)"
+        val escaped = escapeForNsLogFormat(raw)
+        assertTrue(
+            !containsBarePercent(escaped),
+            "expected no bare % in escaped string, got: $escaped"
         )
+    }
 
-        // This used to crash due to NSLog format parsing when percent signs were present.
-        // Simply invoke to ensure it does not throw.
-        PlatformLogBackend.log(event)
+    private fun containsBarePercent(text: String): Boolean {
+        var idx = 0
+        while (idx < text.length) {
+            if (text[idx] == '%') {
+                val next = text.getOrNull(idx + 1)
+                if (next != '%') return true
+                idx += 2
+                continue
+            }
+            idx++
+        }
+        return false
     }
 }

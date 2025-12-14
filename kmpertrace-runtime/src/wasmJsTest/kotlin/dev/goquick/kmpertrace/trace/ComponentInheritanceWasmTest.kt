@@ -1,34 +1,34 @@
 package dev.goquick.kmpertrace.trace
 
-import dev.goquick.kmpertrace.core.EventKind
 import dev.goquick.kmpertrace.core.Level
 import dev.goquick.kmpertrace.log.Log
-import dev.goquick.kmpertrace.log.LogBackend
-import dev.goquick.kmpertrace.log.LoggerConfig
+import dev.goquick.kmpertrace.log.LogRecord
+import dev.goquick.kmpertrace.log.LogSink
+import dev.goquick.kmpertrace.log.KmperTrace
+import dev.goquick.kmpertrace.testutil.parseStructuredSuffix
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-private class CollectingBackend : LogBackend {
-    val events = mutableListOf<dev.goquick.kmpertrace.core.LogEvent>()
-    override fun log(event: dev.goquick.kmpertrace.core.LogEvent) {
-        events += event
+private class CollectingSink : LogSink {
+    val records = mutableListOf<LogRecord>()
+    override fun emit(record: LogRecord) {
+        records += record
     }
 }
 
 class ComponentInheritanceWasmTest {
-    private val backend = CollectingBackend()
+    private val sink = CollectingSink()
 
     @AfterTest
     fun tearDown() {
-        LoggerConfig.backends = emptyList()
-        LoggerConfig.minLevel = Level.DEBUG
-        backend.events.clear()
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = emptyList())
+        sink.records.clear()
     }
 
     @Test
     fun nested_span_inherits_component_and_operation() = kotlinx.coroutines.test.runTest {
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(sinks = listOf(sink))
 
         traceSpan(component = "Downloader", operation = "DownloadProfile") {
             traceSpan("FetchHttp") {
@@ -36,12 +36,11 @@ class ComponentInheritanceWasmTest {
             }
         }
 
-        val childStart = backend.events.first { it.eventKind == EventKind.SPAN_START && it.spanName == "FetchHttp" }
-        val childLog = backend.events.first { it.eventKind == EventKind.LOG && it.message.contains("inside child") }
+        val fields = sink.records.map { parseStructuredSuffix(it.structuredSuffix) }
+        val childStart = fields.first { it["kind"] == "SPAN_START" && it["name"] == "FetchHttp" }
+        val childLog = fields.first { it["kind"] == null && it["head"] == "inside child" }
 
-        assertEquals("Downloader", childStart.sourceComponent)
-        assertEquals("DownloadProfile", childStart.sourceOperation)
-        assertEquals("Downloader", childLog.sourceComponent)
-        assertEquals("DownloadProfile", childLog.sourceOperation)
+        assertEquals("Downloader/DownloadProfile", childStart["src"])
+        assertEquals("Downloader/DownloadProfile", childLog["src"])
     }
 }

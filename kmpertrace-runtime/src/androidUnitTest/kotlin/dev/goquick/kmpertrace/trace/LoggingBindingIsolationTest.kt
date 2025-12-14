@@ -1,9 +1,8 @@
 package dev.goquick.kmpertrace.trace
 
-import dev.goquick.kmpertrace.core.EventKind
 import dev.goquick.kmpertrace.core.Level
 import dev.goquick.kmpertrace.log.Log
-import dev.goquick.kmpertrace.log.LoggerConfig
+import dev.goquick.kmpertrace.log.KmperTrace
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
@@ -13,21 +12,20 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import dev.goquick.kmpertrace.testutil.parseStructuredSuffix
 
 class LoggingBindingIsolationTest {
-    private val backend = AndroidCollectingBackend()
+    private val sink = AndroidCollectingSink()
 
     @AfterTest
     fun tearDown() {
-        LoggerConfig.backends = emptyList()
-        LoggerConfig.minLevel = Level.DEBUG
-        LoggerConfig.filter = { event -> event.level.ordinal >= LoggerConfig.minLevel.ordinal }
-        backend.events.clear()
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = emptyList())
+        sink.records.clear()
     }
 
     @Test
     fun unbound_logs_after_span_are_not_attached() = runBlocking {
-        LoggerConfig.backends = listOf(backend)
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
         traceSpan("isolation-span") {
             Log.d { "span-log" }
@@ -35,19 +33,21 @@ class LoggingBindingIsolationTest {
 
         Log.d { "outside-span-log" }
 
-        val spanLog = backend.events.first { it.eventKind == EventKind.LOG && it.message == "span-log" }
-        val outsideLog = backend.events.first { it.eventKind == EventKind.LOG && it.message == "outside-span-log" }
+        val spanLog = sink.records.first { it.message == "span-log" }
+        val outsideLog = sink.records.first { it.message == "outside-span-log" }
+        val spanFields = parseStructuredSuffix(spanLog.structuredSuffix)
+        val outsideFields = parseStructuredSuffix(outsideLog.structuredSuffix)
 
-        assertNotNull(spanLog.traceId)
-        assertNotNull(spanLog.spanId)
-        assertNull(outsideLog.traceId, "outside log should not carry span trace id")
-        assertNull(outsideLog.spanId, "outside log should not carry span id")
-        assertNull(outsideLog.parentSpanId, "outside log should not carry parent span id")
+        assertNotNull(spanFields["trace"])
+        assertNotNull(spanFields["span"])
+        assertNull(outsideFields["trace"], "outside log should not carry span trace id")
+        assertNull(outsideFields["span"], "outside log should not carry span id")
+        assertNull(outsideFields["parent"], "outside log should not carry parent span id")
     }
 
     @Test
-    fun parallel_spans_keep_trace_ids_separate() = runBlocking {
-        LoggerConfig.backends = listOf(backend)
+    fun parallel_spans_keep_traceIds_separate() = runBlocking {
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
         coroutineScope {
             val a = async {
@@ -60,13 +60,15 @@ class LoggingBindingIsolationTest {
             b.await()
         }
 
-        val logA = backend.events.first { it.eventKind == EventKind.LOG && it.message == "from-A" }
-        val logB = backend.events.first { it.eventKind == EventKind.LOG && it.message == "from-B" }
+        val logA = sink.records.first { it.message == "from-A" }
+        val logB = sink.records.first { it.message == "from-B" }
+        val fieldsA = parseStructuredSuffix(logA.structuredSuffix)
+        val fieldsB = parseStructuredSuffix(logB.structuredSuffix)
 
-        assertNotNull(logA.traceId)
-        assertNotNull(logB.traceId)
-        assertNotEquals(logA.traceId, logB.traceId, "separate spans should have different trace ids")
-        assertEquals("span-A", logA.spanName)
-        assertEquals("span-B", logB.spanName)
+        assertNotNull(fieldsA["trace"])
+        assertNotNull(fieldsB["trace"])
+        assertNotEquals(fieldsA["trace"], fieldsB["trace"], "separate spans should have different trace ids")
+        assertEquals("span-A", parseStructuredSuffix(sink.records.first { it.message == "+++ span-A" }.structuredSuffix)["name"])
+        assertEquals("span-B", parseStructuredSuffix(sink.records.first { it.message == "+++ span-B" }.structuredSuffix)["name"])
     }
 }

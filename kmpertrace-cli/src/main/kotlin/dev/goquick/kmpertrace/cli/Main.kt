@@ -16,14 +16,14 @@ import dev.goquick.kmpertrace.analysis.FilterState
 import dev.goquick.kmpertrace.cli.ansi.AnsiMode
 import dev.goquick.kmpertrace.cli.ansi.shouldColorize
 import dev.goquick.kmpertrace.cli.source.Sources
-import dev.goquick.kmpertrace.parse.ParsedEvent
+import dev.goquick.kmpertrace.parse.ParsedLogRecord
 import java.io.BufferedReader
 import java.nio.file.Path
 
 /**
  * Signature for functions that consume parsed lines and render output.
  */
-typealias PrintProcessor = (Sequence<String>, Boolean, Int?, AnsiMode, TimeFormat, RawLogLevel) -> Unit
+typealias PrintProcessor = (Sequence<String>, Boolean, Int?, AnsiMode, TimeFormat, RawLogLevel, SpanAttrsMode) -> Unit
 
 /**
  * Entry point for the KmperTrace CLI.
@@ -94,12 +94,17 @@ open class PrintCommand(
         "--raw-logs",
         help = "Include raw (non-KmperTrace) lines: off|all|verbose|debug|info|warn|error|assert (default: off)"
     ).validate { validateRawLevel(it) }
+    private val spanAttrs: String? by option(
+        "--span-attrs",
+        help = "Show span attributes: off|on (default: off)"
+    ).validate { validateSpanAttrsMode(it) }
 
     override fun run() {
         val ansiMode = parseAnsiMode(color)
         val timeFormat = parseTimeFormat(timeFormatOpt)
         val (resolvedWidth, autoWidth) = resolveWidth(maxLineWidthOpt, autoByDefault = false)
         val rawLevel = parseRawLevel(rawLogs)
+        val spanAttrsMode = parseSpanAttrsMode(spanAttrs)
         if (follow) {
             val reader: BufferedReader = if (file != null) {
                 file!!.toFile().bufferedReader()
@@ -113,13 +118,14 @@ open class PrintCommand(
                 ansiMode,
                 timeFormat,
                 rawLevel,
+                spanAttrsMode,
                 statusLabel = file?.toString() ?: "stdin",
                 autoWidth = autoWidth
             )
         } else {
             if (file != null) {
                 file!!.toFile().bufferedReader().useLines { lines ->
-                    processor(lines, !hideSource, resolvedWidth, ansiMode, timeFormat, rawLevel)
+                    processor(lines, !hideSource, resolvedWidth, ansiMode, timeFormat, rawLevel, spanAttrsMode)
                 }
             } else {
                 processor(
@@ -128,7 +134,8 @@ open class PrintCommand(
                     resolvedWidth,
                     ansiMode,
                     timeFormat,
-                    rawLevel
+                    rawLevel,
+                    spanAttrsMode
                 )
             }
         }
@@ -192,15 +199,15 @@ class TuiCommand : CliktCommand(name = "tui") {
     )
     private val traceFilter: String? by option(
         "--trace-id",
-        help = "Only include events for this trace id"
+        help = "Only include records for this trace id"
     )
     private val componentFilter: String? by option(
         "--component",
-        help = "Only include events with this source component"
+        help = "Only include records with this source component"
     )
     private val operationFilter: String? by option(
         "--operation",
-        help = "Only include events with this source operation"
+        help = "Only include records with this source operation"
     )
     private val textFilter: String? by option(
         "-F",
@@ -209,17 +216,21 @@ class TuiCommand : CliktCommand(name = "tui") {
     )
     private val excludeUntraced: Boolean by option(
         "--exclude-untraced",
-        help = "Drop events with trace_id=0"
+        help = "Drop records with trace=0"
     ).flag(default = false)
-    private val maxEventsOpt: Int? by option(
+    private val maxRecordsOpt: Int? by option(
         "-M",
-        "--max-events",
-        help = "Buffer size before dropping oldest events (default 5000)"
+        "--max-records",
+        help = "Buffer size before dropping oldest records (default 5000)"
     ).int()
     private val rawLogs: String? by option(
         "--raw-logs",
         help = "Include raw (non-KmperTrace) lines: off|all|verbose|debug|info|warn|error|assert (default: off)"
     ).validate { validateRawLevel(it) }
+    private val spanAttrs: String? by option(
+        "--span-attrs",
+        help = "Show span attributes: off|on (default: off)"
+    ).validate { validateSpanAttrsMode(it) }
 
     override fun run() {
         val ansiMode = parseAnsiMode(color)
@@ -234,6 +245,7 @@ class TuiCommand : CliktCommand(name = "tui") {
         )
         val (resolvedWidth, autoWidth) = resolveWidth(maxLineWidthOpt, autoByDefault = true)
         val rawLevel = parseRawLevel(rawLogs)
+        val spanAttrsMode = parseSpanAttrsMode(spanAttrs)
 
         val resolvedSource =
             Sources.resolve(sourceOpt, file != null, adbCmd, adbPkg, iosCmd, iosProc)
@@ -247,9 +259,10 @@ class TuiCommand : CliktCommand(name = "tui") {
             timeFormat = timeFormat,
             statusLabel = resolvedSource,
             filters = filters,
-            maxEvents = maxEventsOpt ?: 5_000,
+            maxRecords = maxRecordsOpt ?: 5_000,
             autoWidth = autoWidth,
-            rawLogsLevel = rawLevel
+            rawLogsLevel = rawLevel,
+            spanAttrsMode = spanAttrsMode
         ).run()
     }
 }
@@ -260,22 +273,24 @@ private fun processLines(
     maxLineWidth: Int?,
     ansiMode: AnsiMode,
     timeFormat: TimeFormat,
-    rawLevel: RawLogLevel
+    rawLevel: RawLogLevel,
+    spanAttrsMode: SpanAttrsMode
 ) {
-    val ingested = ingestLines(lines, FilterState(), rawLevel, maxEvents = 10_000)
+    val ingested = ingestLines(lines, FilterState(), rawLevel, maxRecords = 10_000)
     if (ingested.snapshot.traces.isEmpty() && ingested.snapshot.untraced.isEmpty() && ingested.raw.isEmpty()) {
-        println("No structured KmperTrace events found.")
+        println("No structured KmperTrace log records found.")
         return
     }
 
     val colorize = ansiMode.shouldColorize()
     val rendered = renderTraces(
         traces = ingested.snapshot.traces,
-        untracedEvents = ingested.snapshot.untraced + ingested.raw,
+        untracedRecords = ingested.snapshot.untraced + ingested.raw,
         showSource = showSource,
         maxLineWidth = maxLineWidth,
         colorize = colorize,
-        timeFormat = timeFormat
+        timeFormat = timeFormat,
+        spanAttrsMode = spanAttrsMode
     )
     println(rendered)
 }
@@ -287,21 +302,22 @@ private fun processFollow(
     ansiMode: AnsiMode,
     timeFormat: TimeFormat,
     rawLevel: RawLogLevel,
+    spanAttrsMode: SpanAttrsMode,
     statusLabel: String?,
     autoWidth: Boolean
 ) {
-    TuiRunner(
+    val isStdin = statusLabel == "stdin"
+    processFollowLiveRefresh(
         reader = reader,
         showSource = showSource,
         maxLineWidth = maxLineWidth,
         ansiMode = ansiMode,
         timeFormat = timeFormat,
-        statusLabel = statusLabel,
-        filters = FilterState(),
-        maxEvents = 5_000,
+        rawLogsLevel = rawLevel,
+        spanAttrsMode = spanAttrsMode,
         autoWidth = autoWidth,
-        rawLogsLevel = rawLevel
-    ).run()
+        isStdin = isStdin
+    )
 }
 
 /**
@@ -309,44 +325,29 @@ private fun processFollow(
  */
 enum class TimeFormat { FULL, TIME_ONLY }
 
-private fun hasOpenStructured(buffer: StringBuilder): Boolean {
-    val open = buffer.lastIndexOf("|{")
-    val close = buffer.lastIndexOf("}|")
-    return open != -1 && open > close
-}
-
-private data class IngestionResult(val snapshot: AnalysisSnapshot, val raw: List<ParsedEvent>)
+private data class IngestionResult(val snapshot: AnalysisSnapshot, val raw: List<ParsedLogRecord>)
 
 private fun ingestLines(
     lines: Sequence<String>,
     filters: FilterState,
     rawLevel: RawLogLevel,
-    maxEvents: Int
+    maxRecords: Int
 ): IngestionResult {
-    val engine = AnalysisEngine(filterState = filters, maxEvents = maxEvents)
-    val raw = mutableListOf<ParsedEvent>()
-    val pending = StringBuilder()
-    collapseAndroidMultiline(lines).forEach { line ->
-        val openStructured = hasOpenStructured(pending)
-        if (rawLevel != RawLogLevel.OFF && !openStructured && !line.contains("|{")) {
-            rawEventFromLine(line, rawLevel)?.let { raw += it }
-        }
-        if (pending.isNotEmpty()) pending.append('\n')
-        pending.append(line)
-
-        val buffered = pending.toString()
-        val lastOpen = buffered.lastIndexOf("|{")
-        val lastClose = buffered.lastIndexOf("}|")
-        if (lastOpen != -1 && lastClose != -1 && lastClose > lastOpen) {
-            val candidate = buffered.substring(0, lastClose + 2)
-            pending.clear()
-            engine.onLine(candidate)
-        } else if (pending.length > 50_000) {
-            pending.clear()
+    val engine = AnalysisEngine(filterState = filters, maxRecords = maxRecords)
+    val raw = mutableListOf<ParsedLogRecord>()
+    lines.forEach { line ->
+        val update = engine.ingest(line)
+        if (rawLevel != RawLogLevel.OFF) {
+            update.rawCandidates.forEach { candidate ->
+                rawRecordFromLine(candidate, rawLevel)?.let { raw += it }
+            }
         }
     }
-    if (pending.isNotEmpty()) {
-        engine.onLine(pending.toString())
+    val flushUpdate = engine.flush()
+    if (rawLevel != RawLogLevel.OFF) {
+        flushUpdate.rawCandidates.forEach { candidate ->
+            rawRecordFromLine(candidate, rawLevel)?.let { raw += it }
+        }
     }
     return IngestionResult(engine.snapshot(), if (rawLevel == RawLogLevel.OFF) emptyList() else raw)
 }
