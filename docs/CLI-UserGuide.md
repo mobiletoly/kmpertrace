@@ -21,8 +21,9 @@ kmpertrace-cli tui --source adb --adb-pkg dev.goquick.kmpertrace.sampleapp
 # Interactive: iOS sim
 kmpertrace-cli tui --source ios --ios-proc SampleApp
 
-# (Tip) TUI needs stdin for key input, so it does not support piping logs via stdin.
-# Use `print` for stdin pipelines, or use `tui --source adb|ios` so the CLI owns stdin.
+# Interactive: iOS device (requires idevicesyslog/libimobiledevice)
+# (on Mac you can install it with: brew install libimobiledevice)
+kmpertrace-cli tui --source ios --ios-target device --ios-proc SampleApp
 ```
 
 ## When to Use Which Mode
@@ -38,7 +39,7 @@ kmpertrace-cli tui --source ios --ios-proc SampleApp
   when stdout is a TTY. If you redirect stdout to a file, it will append refreshed snapshots.
 - Sources:
     - `adb`: builds a command that waits for the package PID and reattaches if the app restarts.
-    - `ios`: uses `xcrun simctl ... --predicate process == "<proc>"`.
+    - `ios`: in `--ios-target=sim` uses `xcrun simctl ... log stream`; in `--ios-target=device` uses `idevicesyslog -p <proc> --no-colors`. `--ios-proc` is required and is used to keep only app-emitted lines (matches `<proc>(...)[pid]` style).
     - `file`/`stdin`: read a file/stream. `--follow` (print-only) tails the file/stdin stream.
 - Buffer: ring buffer (default 5000 records). Dropped count shown in the status bar.
 - Raw logs (opt-in): `--raw-logs` or `[r]` in `tui` includes non-KmperTrace lines from the input
@@ -72,7 +73,10 @@ errors=0 | [s] struct-logs=all | [r] raw-logs=off | [a] attrs=off | [/] filter=o
     - `-f/--file PATH` use a file (add `--follow` in `print` to tail).
     - `--adb-pkg PKG` build the adb command (waits for PID, reattaches on restart); `--adb-cmd CMD`
       override entirely.
-    - `--ios-proc NAME` build the simctl command; `--ios-cmd CMD` override entirely.
+    - `--ios-target {auto|sim|device}` chooses simulator vs real device (default `auto`; requires explicit choice when both are available).
+    - `--ios-proc NAME` iOS process name (required). Used for simulator predicate and for device-side filtering.
+    - `--ios-udid UDID` selects a specific simulator/device when multiple exist (use `idevice_id -l` for device UDIDs).
+    - `--ios-cmd CMD` override entirely (advanced).
 - Formatting (defaults: `color=auto`, `tui` width=auto, `print` width=unlimited,
   `time-format=time-only`, sources shown):
     - `-C/--color {auto|on|off}` force/disable color.
@@ -110,6 +114,9 @@ _Raw single-key on Unix. If raw unavailable (e.g., Windows), type the letter the
 
 - Nothing from `adb`: ensure `--adb-pkg` is correct and the app is installed; CLI waits for PID and
   reattaches on restart.
+- Nothing from iOS device: `idevicesyslog` often behaves like a single-consumer stream. If you have
+  another `idevicesyslog` already running (even in another terminal), stop it (`Ctrl+C`) or kill it
+  (`pkill idevicesyslog`), then restart `kmpertrace-cli`.
 - Wide/ugly stacks: set `-w auto` (tui default) or a number; use `unlimited/0` to disable wrap.
 - Missing color: force `--color=on`; disable with `--color=off` for logs/CI.
 - Too many drops: raise `-M`; status bar shows dropped count.

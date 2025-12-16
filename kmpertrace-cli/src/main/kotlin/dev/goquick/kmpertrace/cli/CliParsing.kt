@@ -7,14 +7,14 @@ internal fun parseAnsiMode(color: String?): AnsiMode =
         "on", "true", "yes" -> AnsiMode.ON
         "off", "false", "no" -> AnsiMode.OFF
         null, "auto" -> AnsiMode.AUTO
-        else -> throw IllegalArgumentException("Invalid --color value: $color (use auto|on|off)")
+        else -> usageError("Invalid --color value: $color (use auto|on|off)")
     }
 
 internal fun parseTimeFormat(timeFormatOpt: String?): TimeFormat =
     when (timeFormatOpt?.lowercase()) {
         null, "time-only", "time" -> TimeFormat.TIME_ONLY
         "full" -> TimeFormat.FULL
-        else -> throw IllegalArgumentException("Invalid --time-format value: $timeFormatOpt (use full|time-only)")
+        else -> usageError("Invalid --time-format value: $timeFormatOpt (use full|time-only)")
     }
 
 /**

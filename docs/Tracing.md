@@ -55,6 +55,27 @@ emitted as `invalid_<key_with_invalid_chars_replaced_with_underscore>`.
 - Binding is off when you log outside spans.
 - Filtering and sinks are configured via `KmperTrace.configure(...)` (e.g., `minLevel`, `filter`, `emitDebugAttributes`).
 
+## Crossing non-coroutine async boundaries (TraceSnapshot)
+
+Coroutine context propagation covers suspending code, but many UI apps also have async boundaries that are *not* coroutines:
+Android `Handler.post {}`, Java `Executor`, and 3rd-party SDK callbacks.
+
+In those cases, you can capture the current trace/span binding inside a span and re-install it when the callback runs so
+logs remain attached to the originating span (no “floating” unbound records in the CLI).
+
+```kotlin
+suspend fun connect() = traceSpan(component = "ConnectScaleUseCase", operation = "execute") {
+    val snap = captureTraceSnapshot()
+
+    // Any logs inside this callback are emitted with the original trace/span IDs:
+    bluetoothSdk.setListener { state ->
+        snap.withTraceSnapshot {
+            Log.d { "workState=$state" }
+        }
+    }
+}
+```
+
 ## Quick usage
 
 ```kotlin

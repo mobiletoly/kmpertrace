@@ -1,14 +1,17 @@
 package dev.goquick.kmpertrace.cli.source
 
+import dev.goquick.kmpertrace.cli.usageError
+
 internal object SourceCommands {
     private val safeAndroidPackageRegex = Regex("^[A-Za-z0-9_.]+$")
     private val safeProcessNameRegex = Regex("^[A-Za-z0-9_.-]+$")
+    private val safeUdidRegex = Regex("^[0-9A-Fa-f-]{8,64}$")
 
     fun buildAdbCommand(adbCmd: String?, adbPkg: String?): String {
         adbCmd?.let { return it }
-        require(adbPkg != null) { "--adb-cmd or --adb-pkg is required when --source=adb" }
-        require(safeAndroidPackageRegex.matches(adbPkg)) {
-            "--adb-pkg must match ${safeAndroidPackageRegex.pattern} (got: $adbPkg)"
+        if (adbPkg == null) usageError("--adb-cmd or --adb-pkg is required when --source=adb")
+        if (!safeAndroidPackageRegex.matches(adbPkg)) {
+            usageError("--adb-pkg must match ${safeAndroidPackageRegex.pattern} (got: $adbPkg)")
         }
         // Wait for the process to appear and reattach if it restarts.
         return """
@@ -38,13 +41,23 @@ internal object SourceCommands {
         """.trimIndent()
     }
 
-    fun buildIosCommand(iosCmd: String?, iosProc: String?): String {
-        iosCmd?.let { return it }
-        require(iosProc != null) { "--ios-cmd or --ios-proc is required when --source=ios" }
-        require(safeProcessNameRegex.matches(iosProc)) {
-            "--ios-proc must match ${safeProcessNameRegex.pattern} (got: $iosProc)"
+    fun buildIosSimCommand(iosProc: String, simUdid: String): String {
+        if (!safeProcessNameRegex.matches(iosProc)) {
+            usageError("--ios-proc must match ${safeProcessNameRegex.pattern} (got: $iosProc)")
         }
-        return """xcrun simctl spawn booted log stream --style syslog --predicate 'process == "$iosProc"'"""
+        if (!safeUdidRegex.matches(simUdid)) {
+            usageError("--ios-udid must match ${safeUdidRegex.pattern} (got: $simUdid)")
+        }
+        return """exec xcrun simctl spawn $simUdid log stream --style syslog --predicate 'process == "$iosProc"'"""
+    }
+
+    fun buildIosDeviceCommand(deviceUdid: String, iosProc: String): String {
+        if (!safeUdidRegex.matches(deviceUdid)) {
+            usageError("--ios-udid must match ${safeUdidRegex.pattern} (got: $deviceUdid)")
+        }
+        if (!safeProcessNameRegex.matches(iosProc)) {
+            usageError("--ios-proc must match ${safeProcessNameRegex.pattern} (got: $iosProc)")
+        }
+        return "exec idevicesyslog -u $deviceUdid -p $iosProc --no-colors"
     }
 }
-

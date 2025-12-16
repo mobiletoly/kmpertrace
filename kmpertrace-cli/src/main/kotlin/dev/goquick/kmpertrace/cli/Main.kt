@@ -168,9 +168,17 @@ class TuiCommand : CliktCommand(name = "tui") {
         "--ios-cmd",
         help = "Command to stream iOS logs (default builds from --ios-proc)"
     )
+    private val iosTarget: String? by option(
+        "--ios-target",
+        help = "iOS target: auto|sim|device (default: auto)"
+    )
     private val iosProc: String? by option(
         "--ios-proc",
-        help = "iOS process name; builds default simctl command when set"
+        help = "iOS process name (required); used for simulator predicate and device filtering"
+    )
+    private val iosUdid: String? by option(
+        "--ios-udid",
+        help = "UDID used with --ios-target sim|device when multiple are present"
     )
     private val hideSource: Boolean by option(
         "-H",
@@ -248,8 +256,19 @@ class TuiCommand : CliktCommand(name = "tui") {
         val spanAttrsMode = parseSpanAttrsMode(spanAttrs)
 
         val resolvedSource =
-            Sources.resolve(sourceOpt, file != null, adbCmd, adbPkg, iosCmd, iosProc)
-        val reader = Sources.readerFor(resolvedSource, file, adbCmd, adbPkg, iosCmd, iosProc)
+            Sources.resolve(sourceOpt, file != null, adbCmd, adbPkg, iosCmd, iosProc, iosTarget, iosUdid)
+        val reader =
+            Sources.readerFor(
+                resolvedSource = resolvedSource,
+                filePath = file,
+                adbCmd = adbCmd,
+                adbPkg = adbPkg,
+                iosCmd = iosCmd,
+                iosProc = iosProc,
+                iosTarget = iosTarget,
+                iosUdid = iosUdid,
+                rawLogsEnabled = rawLevel != RawLogLevel.OFF
+            )
 
         TuiRunner(
             reader = reader,

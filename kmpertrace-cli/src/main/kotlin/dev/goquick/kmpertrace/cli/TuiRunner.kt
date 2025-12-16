@@ -11,10 +11,9 @@ import dev.goquick.kmpertrace.cli.ansi.AnsiMode
 import dev.goquick.kmpertrace.cli.ansi.shouldColorize
 import dev.goquick.kmpertrace.cli.ansi.stripAnsi
 import java.io.BufferedReader
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.system.exitProcess
 
 internal class TuiRunner(
     private val reader: BufferedReader,
@@ -41,7 +40,7 @@ internal class TuiRunner(
         val engine = AnalysisEngine(filterState = filters, maxRecords = maxRecords)
         val refreshNanos = 300_000_000L // 300ms between redraws
         var lastRender = System.nanoTime()
-        val queue = LinkedBlockingQueue<LoopEvent>(10_000)
+        val queue = LinkedBlockingDeque<LoopEvent>(10_000)
         val inputRawModeState = AtomicBoolean(false)
         val running = AtomicBoolean(true)
         val promptInProgress = AtomicBoolean(false)
@@ -52,9 +51,11 @@ internal class TuiRunner(
             maxRecords = maxRecords,
             promptSearch = {
                 promptInProgress.set(true)
-                val term = promptForSearch(inputRawModeState)
-                promptInProgress.set(false)
-                term
+                try {
+                    promptForSearch(inputRawModeState)
+                } finally {
+                    promptInProgress.set(false)
+                }
             }
         ).apply {
             setInitialModes(rawLogsLevel = rawLogsLevel, spanAttrsMode = spanAttrsMode)
@@ -62,12 +63,24 @@ internal class TuiRunner(
 
         var lastWidth: Int? = if (autoWidth) terminal.updateSize().width.takeIf { it > 0 } else maxLineWidth
 
+        fun requestExit() {
+            if (!running.compareAndSet(true, false)) return
+            try {
+                reader.close()
+            } catch (_: Exception) {
+                // ignore
+            }
+            // If the queue is full of log lines, ensure we can wake the main loop immediately.
+            queue.clear()
+            queue.offerFirst(LoopEvent.Eof)
+        }
+
         fun startKeyListener() {
             val inputRawMode = enableRawMode()
             inputRawModeState.set(inputRawMode)
             if (inputRawMode) Runtime.getRuntime().addShutdownHook(Thread { disableRawMode() })
             fun post(evt: UiEvent) {
-                queue.offer(LoopEvent.Ui(evt))
+                queue.offerFirst(LoopEvent.Ui(evt))
             }
             kotlin.concurrent.thread(isDaemon = true, name = "kmpertrace-tui-keys") {
                 if (inputRawMode) {
@@ -79,7 +92,16 @@ internal class TuiRunner(
                         }
                         val ch = input.read()
                         if (ch == -1) break
-                        uiEventsForKey(ch.toChar()).forEach { post(it) }
+                        val c = ch.toChar()
+                        if (c == 'q' || c == 'Q') {
+                            requestExit()
+                            break
+                        }
+                        if (c == '/') {
+                            // Avoid consuming prompt input typed immediately after '/'.
+                            promptInProgress.set(true)
+                        }
+                        uiEventsForKey(c).forEach { post(it) }
                     }
                 } else {
                     val br = System.`in`.bufferedReader()
@@ -131,7 +153,7 @@ internal class TuiRunner(
             )
             clearScreenAndScrollback()
             if (rendered.isBlank()) {
-                terminal.println("No structured KmperTrace log records found yet... (Ctrl+C to exit)")
+                terminal.println("No structured KmperTrace log records found yet...")
             } else {
                 terminal.println(rendered)
             }
@@ -164,11 +186,11 @@ internal class TuiRunner(
                 reader.use { r ->
                     while (running.get()) {
                         val line = r.readLine() ?: break
-                        queue.put(LoopEvent.Line(line))
+                        queue.putLast(LoopEvent.Line(line))
                     }
                 }
             } finally {
-                queue.offer(LoopEvent.Eof)
+                queue.offerLast(LoopEvent.Eof)
             }
         }
 
@@ -176,7 +198,7 @@ internal class TuiRunner(
             val evt = if (autoWidth) {
                 queue.poll(250, TimeUnit.MILLISECONDS)
             } else {
-                queue.take()
+                queue.takeFirst()
             }
 
             var needsForceRender = false
@@ -195,7 +217,9 @@ internal class TuiRunner(
                         is LoopEvent.Ui -> {
                             val update = controller.handleUiEvent(one.event, allowInput = allowInput)
                             needsForceRender = needsForceRender || update.forceRender
-                            if (update.exitRequested) running.set(false)
+                            if (update.exitRequested) {
+                                requestExit()
+                            }
                         }
 
                         is LoopEvent.Line -> {
@@ -238,7 +262,6 @@ internal class TuiRunner(
         }
         System.out.flush()
         disableRawMode()
-        exitProcess(0)
     }
 }
 

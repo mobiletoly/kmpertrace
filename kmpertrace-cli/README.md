@@ -36,6 +36,10 @@ Interactive TUI that streams logs from a source (adb/ios/file/stdin) and live-re
 
 See `docs/CLI-UserGuide.md` for current flags and keys.
 
+iOS notes:
+- Simulator logs are streamed via `xcrun simctl ... log stream`.
+- Real device logs require `idevicesyslog` (libimobiledevice).
+
 ## Colors
 
 - Default `--color=auto` only emits ANSI when stdout is a TTY. Gradle’s `:run` captures stdout, so colors are off unless forced.

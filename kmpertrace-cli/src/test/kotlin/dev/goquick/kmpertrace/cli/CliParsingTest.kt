@@ -1,5 +1,6 @@
 package dev.goquick.kmpertrace.cli
 
+import com.github.ajalt.clikt.core.UsageError
 import dev.goquick.kmpertrace.cli.ansi.AnsiMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,7 +16,7 @@ class CliParsingTest {
 
     @Test
     fun parseAnsiMode_rejects_invalid() {
-        assertFailsWith<IllegalArgumentException> { parseAnsiMode("maybe") }
+        assertFailsWith<UsageError> { parseAnsiMode("maybe") }
     }
 
     @Test
@@ -27,7 +28,7 @@ class CliParsingTest {
 
     @Test
     fun parseTimeFormat_rejects_invalid() {
-        assertFailsWith<IllegalArgumentException> { parseTimeFormat("nope") }
+        assertFailsWith<UsageError> { parseTimeFormat("nope") }
     }
 
     @Test

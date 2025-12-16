@@ -24,6 +24,10 @@ reconstructed from plain log output.*
   One API that works on Android, iOS, JVM, and Wasm, with span/trace propagation that survives
   coroutine and thread hops.
 
+- **Callback-friendly context bridging.**  
+  Capture a `TraceSnapshot` inside a span and re-install it in non-coroutine callbacks (Handler/Executor/SDK listeners)
+  so logs stay attached to the originating span.
+
 - **Structured, low‑overhead logging.**  
   Logfmt‑compatible output that includes level, timestamp, trace/span IDs, source
   component/operation, and optional stack traces for errors.
@@ -56,6 +60,9 @@ reconstructed from plain log output.*
 - **Pure iOS consumer?**  
   See `docs/IOS-XCFramework.md` for using the prebuilt XCFramework (manual drag/drop or SwiftPM
   binary target from the release assets).
+
+- **KMP app with Swift host code?**  
+  See `docs/IOS-KMP-Swift.md` for making `KmperTraceSwift` available to Swift via your KMP framework.
 
 ---
 
