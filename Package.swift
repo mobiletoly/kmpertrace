@@ -15,8 +15,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "KmperTraceRuntime",
-            url: "https://github.com/mobiletoly/kmpertrace/releases/download/v0.2.0/KmperTraceRuntime.xcframework.zip",
-            checksum: "d1dc51eef739f9ba6339846122a808df53c3d79b630d958f5bc103d95d84cd34"
+            url: "https://github.com/mobiletoly/kmpertrace/releases/download/v0.2.1/KmperTraceRuntime.xcframework.zip",
+            checksum: "80e9c8981d353b2aa92e9e726217afab8ce77322fe53315e89f0dab28a4741be"
         )
     ]
 )
