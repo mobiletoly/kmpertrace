@@ -4,15 +4,15 @@ This repo publishes:
 - Maven Central: `kmpertrace-runtime` (and other JVM/KMP artifacts) via `publish.yml` on GitHub Release.
 - SwiftPM binary: XCFramework zip attached to the GitHub Release, with `Package.swift` in the repo root pointing to that zip.
 
-## Release steps (CI-canonical XCFramework)
+## Release steps (SwiftPM + Maven)
 1) Bump version
    - Edit `gradle.properties` `kmpertraceVersion=...` (e.g., `0.1.5` -> `0.1.6`).
    - Commit & push to main.
 
-2) Run helper workflow to build + checksum
+2) Compute SwiftPM checksum for the XCFramework zip
    - GitHub → Actions → **Compute SPM XCFramework checksum** → Run workflow.
-   - Select the commit you just pushed (not a tag). Run it on the commit that already has the version bump.
-   - CI builds the XCFramework, zips it, prints checksum and suggested URL, uploads the zip artifact.
+   - Run it on the commit that contains the version bump.
+   - CI builds the XCFramework, zips it, prints the checksum and suggested URL.
 
 3) Update `Package.swift`
    - From helper logs, copy checksum + suggested URL (`.../releases/download/v<version>/KmperTraceRuntime.xcframework.zip`).
@@ -29,10 +29,10 @@ This repo publishes:
 6) What CI does on the release event
    - publish.yml:
      - Publishes Maven artifacts.
-     - Downloads the `compute-spm-checksum` artifact for the tagged commit.
+     - Builds the iOS XCFramework zip from the tag commit.
      - Verifies `swift package compute-checksum` on that zip matches `Package.swift`.
-     - Uploads that exact zip to the GitHub Release (no rebuild).
-     - Fails if checksum mismatches or zip is missing.
+     - Uploads the zip to the GitHub Release.
+     - Fails if checksum mismatches.
 
 ## SwiftPM consumers
 - Add package dependency:
@@ -43,8 +43,8 @@ This repo publishes:
 
 ## Notes / Gotchas
 - The commit the tag points to must already contain the final `Package.swift`; SwiftPM ignores later commits.
-- The helper workflow is the canonical build; publish.yml does not rebuild the XCFramework.
-- If checksum verification fails in publish.yml, rerun helper, update `Package.swift`, and retag with a new version.
+- The helper workflow exists to help you update `Package.swift` before tagging; publish.yml still verifies the checksum at release time.
+- If checksum verification fails in publish.yml, update `Package.swift` and retag with a new version.
 - `Package.swift` must live in the repo root and be correct per tag; SwiftPM ignores Package.swift uploaded as a release asset.
 - Avoid snapshot versions when tagging.
 - Deprecated Gradle warnings about `exec` are harmless but can be cleaned up later.

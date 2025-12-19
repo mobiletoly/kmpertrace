@@ -62,24 +62,48 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
 
-      - name: Download XCFramework artifact from helper workflow
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARGET_SHA: ${{ github.sha }}
+      - name: Build XCFramework (Release)
         run: |
           set -euo pipefail
-          echo "Looking for compute-spm-checksum workflow run on commit $TARGET_SHA"
-          RUN_ID=$(gh run list --workflow compute-spm-checksum.yml --json databaseId,headSha,conclusion --limit 20 \
-            | jq -r --arg sha "$TARGET_SHA" '.[] | select(.headSha==$sha and .conclusion=="success") | .databaseId' | head -n1)
-          if [ -z "$RUN_ID" ]; then
-            echo "No successful compute-spm-checksum run found for commit $TARGET_SHA. Run the helper workflow on this commit before tagging a release." >&2
+          ./gradlew :kmpertrace-runtime:assembleKmperTraceRuntimeReleaseXCFramework
+
+      - name: Zip XCFramework
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd kmpertrace-runtime/build/XCFrameworks/release
+          rm -f KmperTraceRuntime.xcframework.zip
+          zip -r -X KmperTraceRuntime.xcframework.zip KmperTraceRuntime.xcframework
+
+      - name: Verify SwiftPM checksum matches Package.swift
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP_PATH="kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip"
+          if [ ! -f "$ZIP_PATH" ]; then
+            echo "XCFramework zip not found at $ZIP_PATH" >&2
             exit 1
           fi
-          mkdir -p kmpertrace-runtime/build/XCFrameworks/release
-          gh run download "$RUN_ID" --name "KmperTraceRuntime.xcframework" --dir kmpertrace-runtime/build/XCFrameworks/release
-          if [ ! -f kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip ]; then
-            echo "Downloaded artifact not found at expected path." >&2
-            ls -l kmpertrace-runtime/build/XCFrameworks/release
+
+          EXPECTED_CHECKSUM=$(
+            sed -n 's/^[[:space:]]*checksum:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' Package.swift | head -n1
+          )
+
+          if [ -z "$EXPECTED_CHECKSUM" ]; then
+            echo "Failed to parse checksum from Package.swift (expected a line like: checksum: \"...\")" >&2
+            exit 1
+          fi
+
+          ACTUAL_CHECKSUM=$(swift package compute-checksum "$ZIP_PATH")
+
+          echo "SwiftPM checksum (Package.swift): $EXPECTED_CHECKSUM"
+          echo "SwiftPM checksum (built zip):     $ACTUAL_CHECKSUM"
+
+          if [ "$EXPECTED_CHECKSUM" != "$ACTUAL_CHECKSUM" ]; then
+            echo "" >&2
+            echo "ERROR: SwiftPM checksum mismatch." >&2
+            echo "Update Package.swift to match the built zip checksum, commit, and retag the release." >&2
             exit 1
           fi
 
