@@ -46,5 +46,6 @@ This repo publishes:
 - The helper workflow exists to help you update `Package.swift` before tagging; publish.yml still verifies the checksum at release time.
 - If checksum verification fails in publish.yml, update `Package.swift` and retag with a new version.
 - `Package.swift` must live in the repo root and be correct per tag; SwiftPM ignores Package.swift uploaded as a release asset.
+- `Package.swift` can be formatted either as multi-line or single-line; CI parses `checksum: "..."` anywhere in the file.
 - Avoid snapshot versions when tagging.
 - Deprecated Gradle warnings about `exec` are harmless but can be cleaned up later.
