@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm") version "2.2.21"
+    kotlin("jvm") version "2.3.0"
     `java-gradle-plugin`
 //    id("com.vanniktech.maven.publish") version "0.35.0"
 }
@@ -15,7 +15,7 @@ java {
 
 dependencies {
     implementation(gradleApi())
-    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21")
+    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.0")
     testImplementation(kotlin("test"))
 }
 
