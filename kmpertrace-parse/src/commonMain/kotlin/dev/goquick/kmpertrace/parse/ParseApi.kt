@@ -15,7 +15,7 @@ fun parseLine(line: String): ParsedLogRecord? {
     val start = trimmed.lastIndexOf("|{")
     val end = trimmed.lastIndexOf("}|")
     if (start == -1 || end == -1 || end <= start + 2) return null
-    val humanPrefix = trimmed.substring(0, start).trimEnd()
+    val humanPrefix = stripLogcatPrefixesFromContinuationLines(trimmed.substring(0, start).trimEnd())
 
     val structured = trimmed.substring(start + 2, end).trim()
     if (structured.isEmpty()) return null

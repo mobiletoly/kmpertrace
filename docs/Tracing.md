@@ -76,6 +76,92 @@ suspend fun connect() = traceSpan(component = "ConnectScaleUseCase", operation =
 }
 ```
 
+## Why trace=0 happens (and how to fix it)
+
+If a log line shows `trace=0` (or no `trace` field), the log was emitted without an active trace binding.
+Common causes:
+
+- The work jumped across a non-coroutine boundary (callbacks, executors, handlers).
+- A library switches dispatchers internally, and the trace binding was not re-attached *after* the hop.
+- On iOS/Wasm, a `withContext(dispatcher)` hop can replace the interceptor unless you preserve it.
+
+### Recipe: dispatcher hop you control
+
+Prefer `withTraceContext(dispatcher)` when you own the hop:
+
+```kotlin
+withTraceContext(ioDispatcher) {
+    Log.d { "still bound to the current span" }
+}
+```
+
+### Recipe: hop inside a library (transaction example)
+
+If a library switches dispatchers internally, re-attach the binding *inside* the boundary after the hop:
+
+```kotlin
+suspend fun runTx(block: suspend () -> Unit) {
+    db.transaction {
+        withCurrentTrace {
+            block()
+        }
+    }
+}
+```
+
+`withCurrentTrace { ... }` is a convenience helper. It does not fix executor/callback boundaries, and it
+cannot override a dispatcher hop unless used inside the boundary after the hop.
+
+When you already captured a snapshot, you can be explicit:
+
+```kotlin
+val snap = captureTraceSnapshot()
+db.transaction {
+    snap.withTrace {
+        block()
+    }
+}
+```
+
+### Recipe: callbacks and executors
+
+Use snapshot wrappers when crossing non-coroutine async boundaries:
+
+```kotlin
+val snap = captureTraceSnapshot()
+sdk.setListener { state ->
+    snap.withTraceSnapshot {
+        Log.d { "state=$state" }
+    }
+}
+```
+
+## Journeys (trigger-first root spans)
+
+Many app flows are easiest to debug when each “story” starts with an explicit trigger (a user tap, tab switch,
+bootstrap event, etc.). KmperTrace provides a small helper to make that pattern consistent:
+
+- `LogContext.journey(...)` creates a span and records `a:trigger=<value>` on the span end.
+- It also emits one INFO milestone at the start: `journey started (trigger=...)`, so the trigger is visible even
+  when span attributes are hidden in UIs.
+- If there is no active trace, the journey span becomes a root span (new trace). If called inside an existing trace,
+  it becomes a child span in the same trace.
+
+For a full tutorial and HMScale-oriented patterns, see `docs/Journeys.md`.
+
+```kotlin
+val log = Log.forComponent("PairDevice")
+
+suspend fun onPairClicked(rescan: Boolean) = log.journey(
+    operation = "scanForScales",
+    trigger = TraceTrigger.tap("PairButton"),
+    attributes = mapOf("rescan" to rescan.toString())
+) {
+    Log.i { "starting scan" }
+    // ...
+}
+```
+
 ## Quick usage
 
 ```kotlin

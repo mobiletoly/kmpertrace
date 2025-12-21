@@ -5,7 +5,7 @@ import java.io.ByteArrayOutputStream
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
-    alias(libs.plugins.androidLibrary)
+    alias(libs.plugins.androidKmpLibrary)
     id("com.vanniktech.maven.publish")
 }
 
@@ -23,10 +23,13 @@ kotlin {
         )
     }
 
-    androidTarget {
+    androidLibrary {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
         }
+        namespace = "dev.goquick.kmpertrace.runtime"
+        compileSdk = libs.versions.androidCompileSdk.get().toInt()
+        minSdk = libs.versions.androidMinSdk.get().toInt()
     }
 
     val iosTargets = listOf(
@@ -60,9 +63,6 @@ kotlin {
             implementation(npm("@js-joda/core", "5.5.2"))
         }
         jvmTest.dependencies {
-            implementation(kotlin("test"))
-        }
-        androidUnitTest.dependencies {
             implementation(kotlin("test"))
         }
         iosTest.dependencies {
@@ -102,17 +102,17 @@ tasks.register("prepareSpmRelease") {
 
         val zipFile = releaseDir.file("KmperTraceRuntime.xcframework.zip")
         zipFile.asFile.delete()
-        project.exec {
+        providers.exec {
             workingDir = releaseDir.asFile
             commandLine("zip", "-r", zipFile.asFile.name, xcframeworkDir.asFile.name)
-        }
+        }.result.get()
 
         val checksumOutput = ByteArrayOutputStream()
-        project.exec {
+        providers.exec {
             workingDir = releaseDir.asFile
             commandLine("shasum", "-a", "256", zipFile.asFile.name)
             standardOutput = checksumOutput
-        }
+        }.result.get()
         val checksum = checksumOutput.toString().trim().split(" ").firstOrNull()
             ?: error("Failed to parse checksum")
 
@@ -127,20 +127,6 @@ tasks.register("prepareSpmRelease") {
         println("[KmperTrace] Prepared Package.swift for v$version")
         println("[KmperTrace] URL: $url")
         println("[KmperTrace] SHA-256: $checksum")
-    }
-}
-
-android {
-    namespace = "dev.goquick.kmpertrace.runtime"
-    compileSdk = libs.versions.androidCompileSdk.get().toInt()
-
-    defaultConfig {
-        minSdk = libs.versions.androidMinSdk.get().toInt()
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
     }
 }
 

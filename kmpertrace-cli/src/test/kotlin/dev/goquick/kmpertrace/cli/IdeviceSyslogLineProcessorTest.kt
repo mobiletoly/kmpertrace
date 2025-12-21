@@ -83,4 +83,47 @@ class IdeviceSyslogLineProcessorTest {
         assertTrue(out.contains("<Notice>"))
         assertTrue(out.endsWith("Sending UIEvent type: 0; subtype: 0; to windows: 1"))
     }
+
+    @Test
+    fun drops_interleaved_prefixed_lines_inside_structured_frame() {
+        val processor = IdeviceSyslogLineProcessor(iosProc = "SampleApp")
+
+        val processed = listOf(
+            """Dec 15 01:39:46.970278 SampleApp(SampleApp.debug.dylib)[10612] <Notice>: ❌ Downloader: --- Downloader.DownloadA |{ ts=2025-12-15T06:39:46.919486Z lvl=error trace=0f89d69311de9211 span=783c26a493db2329 parent=fa23c337562453a8 kind=SPAN_END name="Downloader.DownloadA" stack_trace="first""",
+            """Dec 15 01:39:46.970300 SampleApp(Network)[10612] <Notice>: [Network] <Info> nw_endpoint_handler_start""",
+            """Dec 15 01:39:46.970310 SampleApp(SampleApp.debug.dylib)[10612] <Notice>: 🔍 SqliteNow: SafeSQLiteConnection.execSQL: CREATE TABLE auth_user""",
+            """Dec 15 01:39:46.970407 SampleApp(SampleApp.debug.dylib)[10612] <Notice>: second""",
+            """Dec 15 01:39:46.970468 SampleApp(SampleApp.debug.dylib)[10612] <Notice>: third"}|"""
+        ).mapNotNull(processor::process)
+
+        val parsed = parseLines(processed)
+        assertEquals(1, parsed.size)
+        val stack = parsed.single().rawFields["stack_trace"]
+        assertNotNull(stack)
+        assertTrue(stack.contains("first\nsecond\nthird"))
+        assertTrue(processed.none { it.contains("nw_endpoint_handler_start") })
+        assertTrue(processed.none { it.contains("SafeSQLiteConnection.execSQL") })
+    }
+
+    @Test
+    fun preserves_multiline_sql_until_structured_suffix_arrives() {
+        val processor = IdeviceSyslogLineProcessor(iosProc = "SampleApp")
+
+        val processed = listOf(
+            """Dec 21 13:08:05.073864 SampleApp(SampleApp.debug.dylib)[12554] <Notice>: 🔍 SqliteNow: SafeSQLiteConnection.execSQL: CREATE TABLE app_settings_record""",
+            "(",
+            "-- @@{ field=bootstrapped_date, propertyType=kotlinx.datetime.LocalDate }",
+            """Dec 21 13:08:05.073900 SampleApp(SampleApp.debug.dylib)[12554] <Notice>: 🔍 SqliteNow: SafeSQLiteConnection.execSQL: CREATE TABLE auth_user""",
+            """ ); |{ ts=2025-12-21T18:08:05.073497Z lvl=debug trace=ec36fdbfa569df1c span=a598d5ed0b52dede parent=6e802971404007dc head="SafeSQLiteConne" src=SqliteNow/dbOpen log=SqliteNow svc=sample-app }|"""
+        ).mapNotNull(processor::process)
+
+        val parsed = parseLines(processed)
+        assertEquals(1, parsed.size)
+        val record = parsed.single()
+        assertNotNull(record.message)
+        assertTrue(record.message!!.contains("CREATE TABLE app_settings_record"))
+        assertTrue(record.message!!.contains("bootstrapped_date"))
+        assertTrue(record.message!!.contains(");"))
+        assertTrue(record.message!!.contains("auth_user").not())
+    }
 }

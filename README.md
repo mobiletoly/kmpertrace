@@ -28,6 +28,9 @@ reconstructed from plain log output.*
   Capture a `TraceSnapshot` inside a span and re-install it in non-coroutine callbacks (Handler/Executor/SDK listeners)
   so logs stay attached to the originating span.
 
+- **Journey-friendly root spans.**  
+  Wrap user/system triggers in `LogContext.journey(...)` so each trace starts with an explicit “why”, not just a method name (see `docs/Journeys.md`).
+
 - **Structured, low‑overhead logging.**  
   Logfmt‑compatible output that includes level, timestamp, trace/span IDs, source
   component/operation, and optional stack traces for errors.

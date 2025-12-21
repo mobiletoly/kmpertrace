@@ -10,7 +10,6 @@ pluginManagement {
         id("org.jetbrains.compose") version "1.9.3"
         id("com.android.application") version "8.13.2"
         id("com.android.kotlin.multiplatform.library") version "8.13.2"
-        id("com.android.library") version "8.13.2"
         id("com.android.lint") version "8.13.2"
     }
 }
@@ -21,6 +20,7 @@ plugins {
 
 rootProject.name = "kmpertrace"
 include("sample-app")
+include(":sample-app:androidApp")
 include("kmpertrace-runtime")
 include("kmpertrace-cli")
 include("kmpertrace-parse")

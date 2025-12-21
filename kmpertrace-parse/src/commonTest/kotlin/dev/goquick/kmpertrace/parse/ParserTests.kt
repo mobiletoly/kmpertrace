@@ -373,4 +373,22 @@ IllegalStateException: Fatal network error on \"DownloadA\" at 66% (jobId=90589)
         assertEquals("Downloader", record.loggerName)
         assertEquals("Downloading now", record.message)
     }
+
+    @Test
+    fun strips_logcat_prefixes_from_multiline_messages() {
+        val line = """
+            1766334788.705 19358 19451 D SqliteNow: SafeSQLiteConnection.execSQL: CREATE TABLE app_settings_record
+            1766334788.705 19358 19451 D SqliteNow: (
+            1766334788.705 19358 19451 D SqliteNow: id TEXT NOT NULL
+            1766334788.705 19358 19451 D SqliteNow: ); |{ ts=2025-01-01T00:00:00Z lvl=debug log=SqliteNow trace=abc span=def head="SafeSQLiteConnec" }|
+        """.trimIndent()
+
+        val record = parseLine(line)
+        assertNotNull(record)
+        assertEquals(
+            "SafeSQLiteConnection.execSQL: CREATE TABLE app_settings_record\n(\nid TEXT NOT NULL\n);",
+            record.message
+        )
+        assertTrue(record.message?.contains("19358") == false)
+    }
 }

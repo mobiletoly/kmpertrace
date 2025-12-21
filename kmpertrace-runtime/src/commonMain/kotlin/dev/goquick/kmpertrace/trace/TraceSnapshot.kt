@@ -1,6 +1,8 @@
 package dev.goquick.kmpertrace.trace
 
 import dev.goquick.kmpertrace.core.TraceContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -62,6 +64,16 @@ fun captureTraceSnapshot(): TraceSnapshot =
         traceContext = TraceContextStorage.get(),
         loggingBinding = LoggingBindingStorage.get()
     )
+
+/**
+ * Run [block] with this snapshot installed in the coroutine context, preserving the current dispatcher.
+ */
+suspend fun <T> TraceSnapshot.withTrace(block: suspend () -> T): T {
+    val downstream = currentCoroutineContext()[ContinuationInterceptor]
+    return withContext(asCoroutineContext(downstream)) {
+        block()
+    }
+}
 
 /**
  * Wrap a callback so that when it runs, logs remain attached to [snapshot]'s trace/span (if any).
