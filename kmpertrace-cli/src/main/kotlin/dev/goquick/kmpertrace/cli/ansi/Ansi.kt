@@ -21,6 +21,7 @@ internal object AnsiPalette {
     const val location = "\u001B[2m" // dim
     const val error = "\u001B[31m" // red
     const val warn = "\u001B[33m" // yellow
+    const val marker = "\u001B[34m" // blue
     const val statusBg = "\u001B[48;5;254m" // light gray background
     const val statusFg = "\u001B[30m" // black foreground for status line
     const val statusTrace = "\u001B[34m" // blue for trace count

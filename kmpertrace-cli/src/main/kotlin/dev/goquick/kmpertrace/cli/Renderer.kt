@@ -30,25 +30,73 @@ internal fun renderTraces(
     val sb = StringBuilder()
 
     val timeline = mutableListOf<TimelineItem>()
-    traces.forEach { trace ->
-        val ts = traceTimestamp(trace)
-        timeline += TimelineItem(parseTimestampToInstant(ts, zoneId), ts) { sbInner ->
-            renderTrace(sbInner, trace, showSource, maxLineWidth, colorize, timeFormat, zoneId, spanAttrsMode)
-        }
+    val timelineComparator =
+        compareBy<TimelineItem> { it.instant == null }
+            .thenBy { it.instant }
+            .thenBy { it.rawTimestamp == null }
+            .thenBy { it.rawTimestamp }
+            .thenBy { it.stableOrder }
+
+    val traceAnchors = mutableMapOf<String, TimelineItem>()
+    val traceTitles = traces.associate { it.traceId to traceTitle(it, zoneId) }
+    val traceLastUpdates = findLatestTraceUpdatesByTraceId(traces, zoneId)
+
+    traces.forEachIndexed { idx, trace ->
+        val ts = traceAnchorTimestamp(trace)
+        val item =
+            TimelineItem(
+                instant = parseTimestampToInstant(ts, zoneId),
+                rawTimestamp = ts,
+                stableOrder = idx,
+                kind = TimelineKind.TRACE,
+                traceId = trace.traceId
+            ) { sbInner ->
+                renderTrace(sbInner, trace, showSource, maxLineWidth, colorize, timeFormat, zoneId, spanAttrsMode)
+            }
+        timeline += item
+        traceAnchors[trace.traceId] = item
     }
-    untracedRecords.forEach { record ->
-        timeline += TimelineItem(parseTimestampToInstant(record.timestamp, zoneId), record.timestamp) { sbInner ->
+
+    untracedRecords.forEachIndexed { idx, record ->
+        timeline += TimelineItem(
+            instant = parseTimestampToInstant(record.timestamp, zoneId),
+            rawTimestamp = record.timestamp,
+            stableOrder = traces.size + idx,
+            kind = TimelineKind.UNTRACED,
+            traceId = null
+        ) { sbInner ->
             renderUntraced(sbInner, record, showSource, maxLineWidth, colorize, timeFormat, zoneId)
         }
     }
 
-    val sorted =
-        timeline.sortedWith(
-            compareBy<TimelineItem> { it.instant == null }
-                .thenBy { it.instant }
-                .thenBy { it.rawTimestamp == null }
-                .thenBy { it.rawTimestamp }
-        )
+    // Add at most one marker per trace id (placed at that trace's last `ts`) when the trace had
+    // "late updates": some other item (untraced log or other trace block) is chronologically
+    // between the trace's anchor and its last update.
+    traceLastUpdates.forEach { (traceId, update) ->
+        val lastInstant = update.instant ?: return@forEach
+        val anchorItem = traceAnchors[traceId] ?: return@forEach
+        val anchorInstant = anchorItem.instant ?: return@forEach
+        if (!lastInstant.isAfter(anchorInstant)) return@forEach
+
+        val hasInterleavingItem = timeline.any { item ->
+            val inst = item.instant ?: return@any false
+            if (!inst.isAfter(anchorInstant) || !inst.isBefore(lastInstant)) return@any false
+            !(item.kind == TimelineKind.TRACE && item.traceId == traceId)
+        }
+        if (!hasInterleavingItem) return@forEach
+
+        timeline += TimelineItem(
+            instant = lastInstant,
+            rawTimestamp = update.rawTimestamp,
+            stableOrder = Int.MAX_VALUE - 10_000 + (anchorItem.stableOrder.coerceAtLeast(0) % 10_000),
+            kind = TimelineKind.MARKER,
+            traceId = traceId
+        ) { sbInner ->
+            renderUntraced(sbInner, update.toMarkerRecord(traceTitles[traceId]), showSource, maxLineWidth, colorize, timeFormat, zoneId)
+        }
+    }
+
+    val sorted = timeline.sortedWith(timelineComparator)
     sorted.forEach { item ->
         if (sb.isNotEmpty()) sb.appendLine()
         item.render(sb)
@@ -57,9 +105,47 @@ internal fun renderTraces(
     return sb.toString().trimEnd()
 }
 
+private data class LatestTraceUpdate(
+    val traceId: String,
+    val spanName: String?,
+    val rawTimestamp: String?,
+    val instant: Instant?
+) {
+    fun toMarkerRecord(traceTitle: String?): ParsedLogRecord {
+        val title = traceTitle?.takeIf { it.isNotBlank() } ?: "trace"
+        val spanPart = spanName?.takeIf { it.isNotBlank() }?.let { " / span $it" } ?: ""
+        return ParsedLogRecord(
+            traceId = "0",
+            spanId = "0",
+            parentSpanId = null,
+            logRecordKind = LogRecordKind.LOG,
+            spanName = "-",
+            durationMs = null,
+            timestamp = rawTimestamp,
+            loggerName = "KmperTrace",
+            message = "$title ($traceId)$spanPart",
+            sourceComponent = null,
+            sourceOperation = null,
+            sourceLocationHint = null,
+            sourceFile = null,
+            sourceLine = null,
+            sourceFunction = null,
+            rawFields = mapOf(
+                "lvl" to "info",
+                "synthetic" to "trace_update_marker"
+            )
+        )
+    }
+}
+
+private enum class TimelineKind { TRACE, UNTRACED, MARKER }
+
 private data class TimelineItem(
     val instant: Instant?,
     val rawTimestamp: String?,
+    val stableOrder: Int,
+    val kind: TimelineKind,
+    val traceId: String?,
     val render: (StringBuilder) -> Unit
 )
 
@@ -112,6 +198,33 @@ private fun renderUntraced(
     timeFormat: TimeFormat,
     zoneId: ZoneId
 ) {
+    if (record.rawFields["synthetic"] == "trace_update_marker") {
+        val ts = formatTimestamp(record.timestamp, timeFormat, zoneId)
+        val msg = record.message ?: ""
+        val prefix = "• 🔄 "
+        val continuationPrefix = "   "
+        fun maybeMarkerBold(text: String): String =
+            if (colorize) "${AnsiPalette.span}${AnsiPalette.marker}$text${AnsiPalette.reset}" else text
+
+        val (tracePart, spanPart) =
+            msg.split(" / span ", limit = 2).let { parts ->
+                val trace = parts.firstOrNull().orEmpty()
+                val span = parts.getOrNull(1)?.let { " / span $it" }.orEmpty()
+                trace to span
+            }
+
+        val content =
+            buildString {
+                append(maybeMarkerBold("TRACE UPDATED"))
+                append(" at ").append(maybeColor(ts, AnsiPalette.timestamp, colorize))
+                append(maybeColor(" → ", AnsiPalette.marker, colorize))
+                append(maybeMarkerBold(tracePart))
+                if (spanPart.isNotEmpty()) append(maybeColor(spanPart, AnsiPalette.marker, colorize))
+            }
+        appendWrappedLine(sb, prefix, content, maxLineWidth, continuationPrefix, softWrap = true)
+        return
+    }
+
     val ts = formatTimestamp(record.timestamp, timeFormat, zoneId)
     val logger = record.loggerName ?: "-"
     val msg = record.message ?: ""
@@ -160,8 +273,41 @@ private fun renderUntraced(
     }
 }
 
-private fun traceTimestamp(trace: TraceTree): String? =
+private fun traceAnchorTimestamp(trace: TraceTree): String? =
     trace.spans.mapNotNull { it.startTimestamp ?: it.firstTimestamp() }.minOrNull()
+
+private fun traceTitle(trace: TraceTree, zoneId: ZoneId): String? =
+    trace.spans
+        .minByOrNull { span -> parseTimestampToInstant(span.startTimestamp ?: span.firstTimestamp(), zoneId) ?: Instant.MAX }
+        ?.spanName
+
+private fun findLatestTraceUpdatesByTraceId(traces: List<TraceTree>, zoneId: ZoneId): Map<String, LatestTraceUpdate> {
+    val bestByTrace = mutableMapOf<String, LatestTraceUpdate>()
+
+    fun consider(traceId: String, spanName: String?, record: ParsedLogRecord) {
+        val instant = parseTimestampToInstant(record.timestamp, zoneId) ?: return
+        val current = bestByTrace[traceId]
+        if (current == null || current.instant == null || instant.isAfter(current.instant)) {
+            bestByTrace[traceId] = LatestTraceUpdate(
+                traceId = traceId,
+                spanName = spanName,
+                rawTimestamp = record.timestamp,
+                instant = instant
+            )
+        }
+    }
+
+    fun visitSpan(traceId: String, span: SpanNode) {
+        span.records.forEach { consider(traceId, span.spanName, it) }
+        span.children.forEach { child -> visitSpan(traceId, child) }
+    }
+
+    traces.forEach { trace ->
+        trace.spans.forEach { span -> visitSpan(trace.traceId, span) }
+    }
+
+    return bestByTrace
+}
 
 private fun renderSpan(
     sb: StringBuilder,
@@ -176,21 +322,28 @@ private fun renderSpan(
     spanAttrsMode: SpanAttrsMode
 ) {
     val connector = if (isLast) "└─" else "├─"
-    val durationPart = span.durationMs?.let { " (${it} ms)" } ?: ""
     val spanSourceHint = if (showSource) buildSourceHint(span.sourceComponent, span.sourceOperation, span.sourceLocationHint) else null
     val spanHasError = span.records.any { it.logRecordKind == LogRecordKind.SPAN_END && (it.rawFields["status"] == "ERROR" || it.rawFields["throwable"] != null) }
     val spanPrefix = prefix + connector + ' '
     val continuationPrefixForSpan = prefix + if (isLast) "   " else "│  "
+    val journeyStarted = foldableJourneyStarted(span, prefix, zoneId)
+    val durationPart = if (journeyStarted != null) "" else span.durationMs?.let { " (${it} ms)" } ?: ""
     val spanContent = buildString {
         val nameText = maybeColorBold(span.spanName, colorize = colorize)
         val contentText = if (spanHasError) maybeColor(nameText, AnsiPalette.error, colorize) else nameText
         val glyph = if (spanHasError) "❌ " else ""
         append(glyph).append(contentText)
         append(durationPart)
+        journeyStarted?.let { journey ->
+            val journeyTs = formatTimestamp(journey.timestamp, timeFormat, zoneId)
+            append(" journey ").append(maybeColor("at", AnsiPalette.timestamp, colorize)).append(' ')
+            append(maybeColor(journeyTs, AnsiPalette.timestamp, colorize))
+            journey.params?.let { params -> append(' ').append(params) }
+        }
         if (spanSourceHint != null && spanSourceHint != span.spanName) {
             append(" [").append(maybeColor(spanSourceHint, AnsiPalette.source, colorize)).append(']')
         }
-        formatSpanAttrs(span.attributes, spanAttrsMode)?.let { attrs ->
+        formatSpanAttrs(span.attributes.filteredForJourney(journeyStarted), spanAttrsMode)?.let { attrs ->
             append(' ').append(maybeColor(attrs, AnsiPalette.timestamp, colorize))
         }
     }
@@ -199,7 +352,10 @@ private fun renderSpan(
     val childPrefix = prefix + if (isLast) "   " else "│  "
 
     val items = mutableListOf<SpanRenderable>()
-    span.records.forEach { items += SpanRenderable.RecordItem(it) }
+    span.records.forEach { record ->
+        if (journeyStarted?.record === record) return@forEach
+        items += SpanRenderable.RecordItem(record)
+    }
     span.children.forEach { child ->
         val childTs = child.startTimestamp ?: child.firstTimestamp()
         items += SpanRenderable.ChildItem(child, childTs)
@@ -322,6 +478,57 @@ private sealed class SpanRenderable(open val timestamp: String?) {
 private fun SpanNode.firstTimestamp(): String? =
     records.mapNotNull { it.timestamp }.minOrNull()
         ?: children.mapNotNull { it.firstTimestamp() }.minOrNull()
+
+private fun Map<String, String>.filteredForJourney(journeyStarted: JourneyStarted?): Map<String, String> {
+    if (journeyStarted?.params == null) return this
+    // Avoid visual duplication when we already show `(trigger=...)` as part of the journey header.
+    return filterKeys { key -> stripAttrPrefix(key) != "trigger" }
+}
+
+private data class JourneyStarted(
+    val record: ParsedLogRecord,
+    val timestamp: String,
+    val params: String?
+)
+
+private fun foldableJourneyStarted(span: SpanNode, prefix: String, zoneId: ZoneId): JourneyStarted? {
+    // Only fold for root spans (first-level spans rendered directly under `trace ...`).
+    if (prefix.isNotEmpty()) return null
+
+    val best =
+        span.records
+            .mapNotNull { record ->
+                val message = record.message?.trim().orEmpty()
+                if (!message.startsWith("journey started", ignoreCase = true)) return@mapNotNull null
+                val ts = record.timestamp ?: return@mapNotNull null
+                val params =
+                    Regex("^journey started\\s*(\\(.*\\))\\s*$", RegexOption.IGNORE_CASE)
+                        .matchEntire(message)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                JourneyStarted(record = record, timestamp = ts, params = params)
+            }
+            .minByOrNull { journey -> parseTimestampToInstant(journey.timestamp, zoneId) ?: Instant.MAX }
+            ?: return null
+
+    // Only fold when it's the earliest event we can see in this span tree (records + child starts).
+    val bestInstant = parseTimestampToInstant(best.timestamp, zoneId) ?: return null
+    val earliestOtherInstant =
+        sequence {
+            span.records.forEach { record ->
+                if (record === best.record) return@forEach
+                record.timestamp?.let { yield(it) }
+            }
+            span.children.forEach { child ->
+                (child.startTimestamp ?: child.firstTimestamp())?.let { yield(it) }
+            }
+        }
+            .mapNotNull { ts -> parseTimestampToInstant(ts, zoneId) }
+            .minOrNull()
+
+    if (earliestOtherInstant != null && earliestOtherInstant.isBefore(bestInstant)) return null
+    return best
+}
 
 private fun buildSourceHint(component: String?, operation: String?, hint: String?): String? =
     when {

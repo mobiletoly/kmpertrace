@@ -10,6 +10,7 @@ internal fun applySearchFilter(snapshot: AnalysisSnapshot, term: String?): Analy
     val trimmed = term?.trim()
     if (trimmed.isNullOrEmpty()) return snapshot
     val filteredTraces = snapshot.traces.mapNotNull { trace ->
+        if (containsTerm(trace.traceId, trimmed)) return@mapNotNull trace
         val spans = trace.spans.mapNotNull { span -> filterSpanByTerm(span, trimmed) }
         if (spans.isEmpty()) null else trace.copy(spans = spans)
     }
@@ -56,16 +57,18 @@ private fun isErrorRecord(record: ParsedLogRecord): Boolean =
             (record.logRecordKind == LogRecordKind.SPAN_END && record.rawFields["err_msg"] != null)
 
 private fun filterSpanByTerm(span: SpanNode, term: String): SpanNode? {
+    if (matchesSpan(span, term)) return span
     val childMatches = span.children.mapNotNull { child -> filterSpanByTerm(child, term) }
     val recordMatches = span.records.filter { record -> matchesRecord(record, term) }
-    val selfMatch = matchesSpan(span, term)
-    return if (selfMatch || childMatches.isNotEmpty() || recordMatches.isNotEmpty()) {
+    return if (childMatches.isNotEmpty() || recordMatches.isNotEmpty()) {
         span.copy(records = recordMatches, children = childMatches)
     } else null
 }
 
 private fun matchesSpan(span: SpanNode, term: String): Boolean =
-    containsTerm(span.spanName, term) ||
+    containsTerm(span.spanId, term) ||
+            containsTerm(span.parentSpanId, term) ||
+            containsTerm(span.spanName, term) ||
             containsTerm(span.sourceComponent, term) ||
             containsTerm(span.sourceOperation, term) ||
             containsTerm(span.sourceLocationHint, term) ||
@@ -73,7 +76,10 @@ private fun matchesSpan(span: SpanNode, term: String): Boolean =
             containsTerm(span.sourceFunction, term)
 
 internal fun matchesRecord(record: ParsedLogRecord, term: String): Boolean =
-    containsTerm(record.message, term) ||
+    containsTerm(record.traceId, term) ||
+            containsTerm(record.spanId, term) ||
+            containsTerm(record.parentSpanId, term) ||
+            containsTerm(record.message, term) ||
             containsTerm(record.loggerName, term) ||
             containsTerm(record.sourceComponent, term) ||
             containsTerm(record.sourceOperation, term) ||

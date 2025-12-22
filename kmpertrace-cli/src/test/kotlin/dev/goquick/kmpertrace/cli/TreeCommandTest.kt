@@ -178,6 +178,151 @@ class TreeCommandTest {
     }
 
     @Test
+    fun trace_update_marker_is_inserted_among_untraced_logs_by_ts() {
+        val lines = sequenceOf(
+            "t INFO Api |{ ts=2025-01-01T00:00:01Z lvl=info log=Api trace=trace-1 span=root parent=- kind=SPAN_START name=\"root\" dur=0 head=\"start\" }|",
+            "t INFO Api |{ ts=2025-01-01T00:00:15Z lvl=info log=Api trace=trace-1 span=root parent=- kind=LOG name=\"root\" dur=0 head=\"updated\" }|",
+            "t INFO Loose |{ ts=2025-01-01T00:00:10Z lvl=info log=Loose trace=0 span=0 parent=0 kind=LOG name=\"-\" dur=0 head=\"log 2\" }|",
+            "t INFO Loose |{ ts=2025-01-01T00:00:20Z lvl=info log=Loose trace=0 span=0 parent=0 kind=LOG name=\"-\" dur=0 head=\"log 3\" }|"
+        )
+
+        val records = parseLines(lines)
+        val traces = buildTraces(records)
+        val untraced = records.filter { it.traceId == "0" }
+        val rendered =
+            renderTraces(
+                traces,
+                untracedRecords = untraced,
+                showSource = false,
+                colorize = false,
+                timeFormat = TimeFormat.TIME_ONLY,
+                zoneId = ZoneOffset.UTC
+            )
+
+        val idxLog2 = rendered.indexOf("00:00:10.000 Loose: log 2")
+        val idxMarker = rendered.indexOf("TRACE UPDATED")
+        val idxLog3 = rendered.indexOf("00:00:20.000 Loose: log 3")
+        assertTrue(idxLog2 >= 0 && idxMarker >= 0 && idxLog3 >= 0, "expected log2/marker/log3 in output:\n$rendered")
+        assertTrue(idxLog2 < idxMarker && idxMarker < idxLog3, "expected marker between log 2 and log 3:\n$rendered")
+        assertTrue(rendered.contains("(trace-1)"), "expected marker to include trace id:\n$rendered")
+    }
+
+    @Test
+    fun older_untraced_logs_render_above_newer_traces() {
+        val lines = sequenceOf(
+            "t INFO Loose |{ ts=2025-01-01T00:00:01Z lvl=info log=Loose trace=0 span=0 parent=0 kind=LOG name=\"-\" dur=0 head=\"old\" }|",
+            "t INFO Api |{ ts=2025-01-01T00:00:10Z lvl=info log=Api trace=trace-1 span=root parent=- kind=SPAN_START name=\"root\" dur=0 head=\"start\" }|"
+        )
+
+        val records = parseLines(lines)
+        val traces = buildTraces(records)
+        val untraced = records.filter { it.traceId == "0" }
+        val rendered =
+            renderTraces(
+                traces,
+                untracedRecords = untraced,
+                showSource = false,
+                colorize = false,
+                timeFormat = TimeFormat.TIME_ONLY,
+                zoneId = ZoneOffset.UTC
+            )
+
+        val idxOld = rendered.indexOf("00:00:01.000 Loose: old")
+        val idxTrace = rendered.indexOf("trace trace-1")
+        assertTrue(idxOld >= 0 && idxTrace >= 0, "expected both untraced and trace:\n$rendered")
+        assertTrue(idxOld < idxTrace, "expected older untraced log above newer trace:\n$rendered")
+    }
+
+    @Test
+    fun trace_update_marker_is_omitted_when_it_would_be_last_line() {
+        val lines = sequenceOf(
+            // Untraced log earlier than the trace update.
+            "t INFO Loose |{ ts=2025-01-01T00:00:10Z lvl=info log=Loose trace=0 span=0 parent=0 kind=LOG name=\"-\" dur=0 head=\"older\" }|",
+            // Latest trace update is after all untraced items.
+            "t INFO Api |{ ts=2025-01-01T00:00:20Z lvl=info log=Api trace=trace-1 span=root parent=- kind=SPAN_START name=\"root\" dur=0 head=\"start\" }|",
+            "t INFO Api |{ ts=2025-01-01T00:00:30Z lvl=info log=Api trace=trace-1 span=root parent=- kind=LOG name=\"root\" dur=0 head=\"updated\" }|"
+        )
+
+        val records = parseLines(lines)
+        val traces = buildTraces(records)
+        val untraced = records.filter { it.traceId == "0" }
+        val rendered =
+            renderTraces(
+                traces,
+                untracedRecords = untraced,
+                showSource = false,
+                colorize = false,
+                timeFormat = TimeFormat.TIME_ONLY,
+                zoneId = ZoneOffset.UTC
+            )
+
+        assertTrue("TRACE UPDATED" !in rendered, "expected marker to be omitted when last:\n$rendered")
+    }
+
+    @Test
+    fun trace_update_marker_is_shown_when_trace_is_not_last_but_updated_after_later_untraced_logs() {
+        val lines = sequenceOf(
+            // Trace starts first, so its block anchors early.
+            "t INFO Api |{ ts=2025-01-01T00:00:00Z lvl=info log=Api trace=trace-1 span=root parent=- kind=SPAN_START name=\"root\" dur=0 head=\"start\" }|",
+            // Untraced logs after the trace anchor.
+            "t INFO Loose |{ ts=2025-01-01T00:00:05Z lvl=info log=Loose trace=0 span=0 parent=0 kind=LOG name=\"-\" dur=0 head=\"old untraced\" }|",
+            // Trace gets updated after the untraced logs (latest update is 00:00:10).
+            "t INFO Api |{ ts=2025-01-01T00:00:10Z lvl=info log=Api trace=trace-1 span=root parent=- kind=LOG name=\"root\" dur=0 head=\"updated\" }|"
+        )
+
+        val records = parseLines(lines)
+        val traces = buildTraces(records)
+        val untraced = records.filter { it.traceId == "0" }
+        val rendered =
+            renderTraces(
+                traces,
+                untracedRecords = untraced,
+                showSource = false,
+                colorize = false,
+                timeFormat = TimeFormat.TIME_ONLY,
+                zoneId = ZoneOffset.UTC
+            )
+
+        val idxUntraced = rendered.indexOf("00:00:05.000 Loose: old untraced")
+        val idxMarker = rendered.indexOf("TRACE UPDATED")
+        assertTrue(idxUntraced >= 0 && idxMarker >= 0, "expected untraced and marker in output:\n$rendered")
+        assertTrue(idxUntraced < idxMarker, "expected marker to appear after later untraced log:\n$rendered")
+        assertTrue(rendered.contains("(trace-1)"), "expected marker to include trace id:\n$rendered")
+    }
+
+    @Test
+    fun trace_update_markers_are_kept_per_trace_id() {
+        val lines = sequenceOf(
+            // Trace 1 anchors early and updates late.
+            "t INFO Api |{ ts=2025-01-01T00:00:00Z lvl=info log=Api trace=trace-1 span=s1 parent=- kind=SPAN_START name=\"Trace1\" dur=0 head=\"start\" }|",
+            "t INFO Loose |{ ts=2025-01-01T00:00:10Z lvl=info log=Loose trace=0 span=0 parent=0 kind=LOG name=\"-\" dur=0 head=\"between\" }|",
+            "t INFO Api |{ ts=2025-01-01T00:00:30Z lvl=info log=Api trace=trace-1 span=s1 parent=- kind=LOG name=\"Trace1\" dur=0 head=\"update\" }|",
+            // Trace 2 anchors later and also updates after an interleaving untraced log.
+            "t INFO Api |{ ts=2025-01-01T00:00:20Z lvl=info log=Api trace=trace-2 span=s2 parent=- kind=SPAN_START name=\"Trace2\" dur=0 head=\"start\" }|",
+            "t INFO Loose |{ ts=2025-01-01T00:00:22Z lvl=info log=Loose trace=0 span=0 parent=0 kind=LOG name=\"-\" dur=0 head=\"between2\" }|",
+            "t INFO Api |{ ts=2025-01-01T00:00:25Z lvl=info log=Api trace=trace-2 span=s2 parent=- kind=LOG name=\"Trace2\" dur=0 head=\"update\" }|"
+        )
+
+        val records = parseLines(lines)
+        val traces = buildTraces(records)
+        val untraced = records.filter { it.traceId == "0" }
+        val rendered =
+            renderTraces(
+                traces,
+                untracedRecords = untraced,
+                showSource = false,
+                colorize = false,
+                timeFormat = TimeFormat.TIME_ONLY,
+                zoneId = ZoneOffset.UTC
+            )
+
+        val markers = rendered.lines().filter { it.contains("TRACE UPDATED at") && it.contains("(") && it.contains(")") }
+        assertEquals(2, markers.size, "expected one marker per trace:\n$rendered")
+        assertTrue(markers.any { it.contains("(trace-1)") }, "expected marker for trace-1:\n$rendered")
+        assertTrue(markers.any { it.contains("(trace-2)") }, "expected marker for trace-2:\n$rendered")
+    }
+
+    @Test
     fun raw_timeline_is_sorted_by_time_not_string() {
         val structured = sequenceOf(
             "t INFO Api |{ ts=2025-01-01T00:00:00Z lvl=info log=Api trace=trace-1 span=root parent=- kind=SPAN_START name=\"root\" dur=0 head=\"start\" }|",
