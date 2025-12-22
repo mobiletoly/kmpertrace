@@ -92,16 +92,15 @@ internal class IdeviceSyslogLineProcessor(
     iosProc: String?
 ) {
     private val procToken = iosProc?.trim()?.takeIf { it.isNotEmpty() }?.let { "$it(" }
-    private var inStructuredFrame = false
+    private var openStructuredSuffix = false
     private var structuredHeader: IdeviceSyslogPrefixStripper.Header? = null
+    private val bufferedInterleaved = ArrayDeque<String>()
+    private val pendingOutputs = ArrayDeque<String>()
+    private var lastMatchedProc = false
 
     fun process(line: String): String? {
+        val outputs = mutableListOf<String>()
         val matchesProc = procToken?.let { line.contains(it) } ?: true
-        if (!matchesProc && !inStructuredFrame) return null
-        if (!matchesProc && inStructuredFrame && IdeviceSyslogPrefixStripper.hasPrefix(line)) {
-            // Another process log interleaved while we were buffering a multiline record.
-            return null
-        }
 
         val hasPrefix = IdeviceSyslogPrefixStripper.hasPrefix(line)
         val header = if (hasPrefix) IdeviceSyslogPrefixStripper.parseHeader(line) else null
@@ -109,14 +108,13 @@ internal class IdeviceSyslogLineProcessor(
 
         val startsStructured = payloadOnly.contains("|{")
         val closesStructured = payloadOnly.contains("}|")
-        val looksLikeKmperTrace = hasPrefix && looksLikeKmperTraceStart(payloadOnly)
 
-        val justStartedStructured = !inStructuredFrame && (startsStructured || looksLikeKmperTrace)
+        val justStartedStructured = !openStructuredSuffix && startsStructured
 
         if (justStartedStructured) {
-            inStructuredFrame = true
-            structuredHeader = header
-        } else if (inStructuredFrame) {
+            openStructuredSuffix = !closesStructured
+            structuredHeader = if (openStructuredSuffix) header else null
+        } else if (openStructuredSuffix) {
             val currentHeader = structuredHeader
             val matchesStructuredHeader =
                 if (!hasPrefix) true
@@ -126,38 +124,59 @@ internal class IdeviceSyslogLineProcessor(
                     header.pid == currentHeader.pid &&
                     header.level == currentHeader.level
             if (hasPrefix && !matchesStructuredHeader) {
-                return null
+                bufferedInterleaved.addLast(IdeviceSyslogPrefixStripper.normalizeToSyslogStyle(line))
+                return drainNextOutput()
             }
         }
 
         val isStructuredContinuation =
-            inStructuredFrame && !payloadOnly.contains("|{") && !justStartedStructured
+            openStructuredSuffix && !payloadOnly.contains("|{") && !justStartedStructured
 
-        if (inStructuredFrame && closesStructured) {
-            inStructuredFrame = false
+        if (hasPrefix && isStructuredContinuation && looksLikeNewLogPrefix(payloadOnly)) {
+            bufferedInterleaved.addLast(IdeviceSyslogPrefixStripper.normalizeToSyslogStyle(line))
+            return drainNextOutput()
+        }
+
+        if (!hasPrefix && !matchesProc && !openStructuredSuffix && !lastMatchedProc) {
+            return drainNextOutput()
+        }
+
+        if (hasPrefix) {
+            if (!matchesProc && !openStructuredSuffix) {
+                lastMatchedProc = false
+                return drainNextOutput()
+            }
+            lastMatchedProc = matchesProc
+        }
+
+        val shouldStripPrefix = openStructuredSuffix && hasPrefix && !justStartedStructured
+
+        if (openStructuredSuffix && closesStructured) {
+            openStructuredSuffix = false
             structuredHeader = null
         }
 
         // For raw log lines we want timestamps/logger/level (normalize prefix).
         // For multiline structured frames we must keep continuation lines prefix-less, otherwise the
         // syslog header becomes part of quoted fields like `stack_trace`.
-        return when {
-            hasPrefix && isStructuredContinuation && looksLikeNewLogPrefix(payloadOnly) -> null
-            hasPrefix && isStructuredContinuation -> payloadOnly
+        val output = when {
+            shouldStripPrefix || (hasPrefix && isStructuredContinuation) -> payloadOnly
             hasPrefix -> IdeviceSyslogPrefixStripper.normalizeToSyslogStyle(line)
             else -> line
         }
+        outputs += output
+
+        if (!openStructuredSuffix && bufferedInterleaved.isNotEmpty()) {
+            outputs.addAll(bufferedInterleaved)
+            bufferedInterleaved.clear()
+        }
+
+        pendingOutputs.addAll(outputs)
+        return drainNextOutput()
     }
 
-    private fun looksLikeKmperTraceStart(payload: String): Boolean {
-        val trimmed = payload.trimStart()
-        val withoutGlyph = trimmed.removeLeadingGlyph()
-        if (withoutGlyph.startsWith("+++ ") || withoutGlyph.startsWith("--- ")) return true
-        val colon = withoutGlyph.indexOf(':')
-        if (colon <= 0) return false
-        val logger = withoutGlyph.substring(0, colon)
-        return !logger.contains(' ')
-    }
+    private fun drainNextOutput(): String? =
+        if (pendingOutputs.isNotEmpty()) pendingOutputs.removeFirst() else null
 
     private fun looksLikeNewLogPrefix(payload: String): Boolean {
         val trimmed = payload.trimStart()

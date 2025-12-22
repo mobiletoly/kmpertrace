@@ -35,7 +35,7 @@ class IdeviceSyslogLineProcessorTest {
             """Dec 15 01:39:46.970468 SampleApp(SampleApp.debug.dylib)[10612] <Notice>: third"}|"""
         )
 
-        val processed = lines.mapNotNull(processor::process)
+        val processed = lines.mapNotNull(processor::process) + drainOutputs(processor)
         assertEquals(3, processed.size)
         assertTrue(processed[0].contains("❌ Downloader: --- Downloader.DownloadA |{"))
         assertTrue(processed[1].contains("second"))
@@ -55,12 +55,12 @@ class IdeviceSyslogLineProcessorTest {
         val processor = IdeviceSyslogLineProcessor(iosProc = "SampleApp")
 
         val processed =
-            listOf(
+            (listOf(
                 """Dec 15 01:39:46.970278 SampleApp(SampleApp.debug.dylib)[10612] <Notice>: ❌ Downloader: --- Downloader.DownloadA |{ ts=2025-12-15T06:39:46.919486Z lvl=error trace=0f89d69311de9211 span=783c26a493db2329 parent=fa23c337562453a8 kind=SPAN_END name="Downloader.DownloadA" stack_trace="first""",
                 // Some transports emit stack continuations without the process header; we must keep them.
                 """second""",
                 """third"}|"""
-            ).mapNotNull(processor::process)
+            ).mapNotNull(processor::process) + drainOutputs(processor))
 
         val parsed = parseLines(processed)
         assertEquals(1, parsed.size)
@@ -85,7 +85,7 @@ class IdeviceSyslogLineProcessorTest {
     }
 
     @Test
-    fun drops_interleaved_prefixed_lines_inside_structured_frame() {
+    fun buffers_interleaved_prefixed_lines_inside_structured_frame() {
         val processor = IdeviceSyslogLineProcessor(iosProc = "SampleApp")
 
         val processed = listOf(
@@ -94,15 +94,18 @@ class IdeviceSyslogLineProcessorTest {
             """Dec 15 01:39:46.970310 SampleApp(SampleApp.debug.dylib)[10612] <Notice>: 🔍 SqliteNow: SafeSQLiteConnection.execSQL: CREATE TABLE auth_user""",
             """Dec 15 01:39:46.970407 SampleApp(SampleApp.debug.dylib)[10612] <Notice>: second""",
             """Dec 15 01:39:46.970468 SampleApp(SampleApp.debug.dylib)[10612] <Notice>: third"}|"""
-        ).mapNotNull(processor::process)
+        ).mapNotNull(processor::process) + drainOutputs(processor)
 
         val parsed = parseLines(processed)
         assertEquals(1, parsed.size)
         val stack = parsed.single().rawFields["stack_trace"]
         assertNotNull(stack)
         assertTrue(stack.contains("first\nsecond\nthird"))
-        assertTrue(processed.none { it.contains("nw_endpoint_handler_start") })
-        assertTrue(processed.none { it.contains("SafeSQLiteConnection.execSQL") })
+        assertTrue(processed.any { it.contains("nw_endpoint_handler_start") })
+        assertTrue(processed.any { it.contains("SafeSQLiteConnection.execSQL: CREATE TABLE auth_user") })
+        val closeIdx = processed.indexOfFirst { it.contains("""third"}|""") }
+        val interleaveIdx = processed.indexOfFirst { it.contains("nw_endpoint_handler_start") }
+        assertTrue(closeIdx != -1 && interleaveIdx > closeIdx)
     }
 
     @Test
@@ -115,7 +118,7 @@ class IdeviceSyslogLineProcessorTest {
             "-- @@{ field=bootstrapped_date, propertyType=kotlinx.datetime.LocalDate }",
             """Dec 21 13:08:05.073900 SampleApp(SampleApp.debug.dylib)[12554] <Notice>: 🔍 SqliteNow: SafeSQLiteConnection.execSQL: CREATE TABLE auth_user""",
             """ ); |{ ts=2025-12-21T18:08:05.073497Z lvl=debug trace=ec36fdbfa569df1c span=a598d5ed0b52dede parent=6e802971404007dc head="SafeSQLiteConne" src=SqliteNow/dbOpen log=SqliteNow svc=sample-app }|"""
-        ).mapNotNull(processor::process)
+        ).mapNotNull(processor::process) + drainOutputs(processor)
 
         val parsed = parseLines(processed)
         assertEquals(1, parsed.size)
@@ -124,6 +127,15 @@ class IdeviceSyslogLineProcessorTest {
         assertTrue(record.message!!.contains("CREATE TABLE app_settings_record"))
         assertTrue(record.message!!.contains("bootstrapped_date"))
         assertTrue(record.message!!.contains(");"))
-        assertTrue(record.message!!.contains("auth_user").not())
+        assertTrue(processed.any { it.contains("SafeSQLiteConnection.execSQL: CREATE TABLE auth_user") })
     }
+}
+
+private fun drainOutputs(processor: IdeviceSyslogLineProcessor): List<String> {
+    val drained = mutableListOf<String>()
+    while (true) {
+        val out = processor.process("Dec 15 00:00:00.000000 OtherApp(Other)[1] <Notice>: noop") ?: break
+        drained += out
+    }
+    return drained
 }
