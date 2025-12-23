@@ -15,7 +15,11 @@ import dev.goquick.kmpertrace.trace.traceSpan
 import dev.goquick.kmpertrace.trace.withCurrentTrace
 import dev.goquick.kmpertrace.trace.withTrace
 import dev.goquick.kmpertrace.testutil.parseStructuredSuffix
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlin.test.AfterTest
@@ -132,6 +136,32 @@ class RuntimeTracingTests {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun span_end_does_not_mark_error_on_cancellation() = runTest {
+        KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
+
+        val job = launch {
+            traceSpan("cancel") {
+                awaitCancellation()
+            }
+        }
+
+        runCurrent()
+        job.cancel()
+        runCurrent()
+        job.join()
+
+        val spanEnd = sink.records
+            .map { parseStructuredSuffix(it.structuredSuffix) }
+            .first { it["kind"] == "SPAN_END" && it["name"] == "cancel" }
+
+        assertEquals("info", spanEnd["lvl"])
+        assertTrue(spanEnd["status"] == null, "expected cancellation to not set status=ERROR")
+        assertTrue(spanEnd["err_type"] == null, "expected cancellation to not set err_type")
+        assertTrue(spanEnd["err_msg"] == null, "expected cancellation to not set err_msg")
+    }
+
+    @Test
     fun span_end_carries_custom_attributes() = runTest {
         KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
@@ -147,7 +177,7 @@ class RuntimeTracingTests {
     }
 
     @Test
-    fun journey_emits_start_milestone_and_trigger_attribute() = runTest {
+    fun journey_emits_trigger_on_span_start_and_marks_span_kind() = runTest {
         KmperTrace.configure(minLevel = Level.DEBUG, sinks = listOf(sink))
 
         val log = Log.forComponent("UI")
@@ -160,14 +190,14 @@ class RuntimeTracingTests {
         }
 
         val milestone = sink.records.firstOrNull { it.message.startsWith("journey started") }
-        assertNotNull(milestone, "expected journey to emit an INFO milestone log")
-        assertTrue(milestone.message.contains("tap.PairButton"), "expected trigger to be visible in milestone: ${milestone.message}")
+        assertTrue(milestone == null, "expected journey to not emit a 'journey started' milestone log")
 
-        val spanEnd = sink.records
+        val spanStart = sink.records
             .map { parseStructuredSuffix(it.structuredSuffix) }
-            .first { it["kind"] == "SPAN_END" }
-        assertEquals("tap.PairButton", spanEnd["a:trigger"])
-        assertEquals("false", spanEnd["a:rescan"])
+            .first { it["kind"] == "SPAN_START" && it["name"] == "UI.pairDevice" }
+        assertEquals("journey", spanStart["span_kind"])
+        assertEquals("tap.PairButton", spanStart["a:trigger"])
+        assertEquals("false", spanStart["a:rescan"])
     }
 
     @Test

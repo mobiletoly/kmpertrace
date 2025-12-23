@@ -326,24 +326,26 @@ private fun renderSpan(
     val spanHasError = span.records.any { it.logRecordKind == LogRecordKind.SPAN_END && (it.rawFields["status"] == "ERROR" || it.rawFields["throwable"] != null) }
     val spanPrefix = prefix + connector + ' '
     val continuationPrefixForSpan = prefix + if (isLast) "   " else "│  "
-    val journeyStarted = foldableJourneyStarted(span, prefix, zoneId)
-    val durationPart = if (journeyStarted != null) "" else span.durationMs?.let { " (${it} ms)" } ?: ""
+    val journeyHeader = journeyHeader(span)
+    val durationPart = if (journeyHeader != null) "" else span.durationMs?.let { " (${it} ms)" } ?: ""
     val spanContent = buildString {
         val nameText = maybeColorBold(span.spanName, colorize = colorize)
         val contentText = if (spanHasError) maybeColor(nameText, AnsiPalette.error, colorize) else nameText
         val glyph = if (spanHasError) "❌ " else ""
         append(glyph).append(contentText)
         append(durationPart)
-        journeyStarted?.let { journey ->
+        journeyHeader?.let { journey ->
             val journeyTs = formatTimestamp(journey.timestamp, timeFormat, zoneId)
             append(" journey ").append(maybeColor("at", AnsiPalette.timestamp, colorize)).append(' ')
             append(maybeColor(journeyTs, AnsiPalette.timestamp, colorize))
-            journey.params?.let { params -> append(' ').append(params) }
+            journey.trigger?.takeIf { it.isNotBlank() }?.let { trigger ->
+                append(" (trigger=").append(trigger).append(')')
+            }
         }
         if (spanSourceHint != null && spanSourceHint != span.spanName) {
             append(" [").append(maybeColor(spanSourceHint, AnsiPalette.source, colorize)).append(']')
         }
-        formatSpanAttrs(span.attributes.filteredForJourney(journeyStarted), spanAttrsMode)?.let { attrs ->
+        formatSpanAttrs(span.attributes.filteredForJourney(journeyHeader), spanAttrsMode)?.let { attrs ->
             append(' ').append(maybeColor(attrs, AnsiPalette.timestamp, colorize))
         }
     }
@@ -352,10 +354,7 @@ private fun renderSpan(
     val childPrefix = prefix + if (isLast) "   " else "│  "
 
     val items = mutableListOf<SpanRenderable>()
-    span.records.forEach { record ->
-        if (journeyStarted?.record === record) return@forEach
-        items += SpanRenderable.RecordItem(record)
-    }
+    span.records.forEach { record -> items += SpanRenderable.RecordItem(record) }
     span.children.forEach { child ->
         val childTs = child.startTimestamp ?: child.firstTimestamp()
         items += SpanRenderable.ChildItem(child, childTs)
@@ -479,55 +478,25 @@ private fun SpanNode.firstTimestamp(): String? =
     records.mapNotNull { it.timestamp }.minOrNull()
         ?: children.mapNotNull { it.firstTimestamp() }.minOrNull()
 
-private fun Map<String, String>.filteredForJourney(journeyStarted: JourneyStarted?): Map<String, String> {
-    if (journeyStarted?.params == null) return this
+private fun Map<String, String>.filteredForJourney(journeyHeader: JourneyHeader?): Map<String, String> {
+    if (journeyHeader?.trigger.isNullOrBlank()) return this
     // Avoid visual duplication when we already show `(trigger=...)` as part of the journey header.
     return filterKeys { key -> stripAttrPrefix(key) != "trigger" }
 }
 
-private data class JourneyStarted(
-    val record: ParsedLogRecord,
+private data class JourneyHeader(
     val timestamp: String,
-    val params: String?
+    val trigger: String?
 )
 
-private fun foldableJourneyStarted(span: SpanNode, prefix: String, zoneId: ZoneId): JourneyStarted? {
-    // Only fold for root spans (first-level spans rendered directly under `trace ...`).
-    if (prefix.isNotEmpty()) return null
-
-    val best =
-        span.records
-            .mapNotNull { record ->
-                val message = record.message?.trim().orEmpty()
-                if (!message.startsWith("journey started", ignoreCase = true)) return@mapNotNull null
-                val ts = record.timestamp ?: return@mapNotNull null
-                val params =
-                    Regex("^journey started\\s*(\\(.*\\))\\s*$", RegexOption.IGNORE_CASE)
-                        .matchEntire(message)
-                        ?.groupValues
-                        ?.getOrNull(1)
-                JourneyStarted(record = record, timestamp = ts, params = params)
-            }
-            .minByOrNull { journey -> parseTimestampToInstant(journey.timestamp, zoneId) ?: Instant.MAX }
-            ?: return null
-
-    // Only fold when it's the earliest event we can see in this span tree (records + child starts).
-    val bestInstant = parseTimestampToInstant(best.timestamp, zoneId) ?: return null
-    val earliestOtherInstant =
-        sequence {
-            span.records.forEach { record ->
-                if (record === best.record) return@forEach
-                record.timestamp?.let { yield(it) }
-            }
-            span.children.forEach { child ->
-                (child.startTimestamp ?: child.firstTimestamp())?.let { yield(it) }
-            }
-        }
-            .mapNotNull { ts -> parseTimestampToInstant(ts, zoneId) }
-            .minOrNull()
-
-    if (earliestOtherInstant != null && earliestOtherInstant.isBefore(bestInstant)) return null
-    return best
+private fun journeyHeader(span: SpanNode): JourneyHeader? {
+    val isJourneyKind = span.spanKind?.equals("journey", ignoreCase = true) == true
+    val trigger = span.attributes["a:trigger"]
+    if (isJourneyKind) {
+        val ts = span.startTimestamp ?: span.firstTimestamp() ?: return null
+        return JourneyHeader(timestamp = ts, trigger = trigger)
+    }
+    return null
 }
 
 private fun buildSourceHint(component: String?, operation: String?, hint: String?): String? =
@@ -618,16 +587,24 @@ private fun takeVisiblePreservingWords(text: String, limit: Int): String {
         return takeVisible(text, tokenStart)
     }
 
-    // Fallback: hard wrap at last space before limit, or at limit if none.
+    // Fallback: prefer breaking at the last space before limit; if there are no spaces (URLs/UUIDs),
+    // break after a good separator character (/, ?, &, =, -, :, .) to avoid splitting mid-token.
     val rawChunk = takeVisible(text, limit)
     val chunkVisible = stripAnsi(rawChunk)
     val lastSpace = chunkVisible.lastIndexOf(' ')
-    if (lastSpace <= 0) return rawChunk
+    val lastSeparator = lastIndexOfAny(chunkVisible, WRAP_SEPARATORS)
+
+    val breakVisibleLen: Int =
+        when {
+            lastSpace >= MIN_WRAP_BREAK_VISIBLE -> lastSpace
+            lastSeparator >= MIN_WRAP_BREAK_VISIBLE -> lastSeparator + 1 // keep the separator at the end of the line
+            else -> return rawChunk
+        }
 
     var visibleCount = 0
     var i = 0
     val builder = StringBuilder()
-    while (i < rawChunk.length && visibleCount < lastSpace) {
+    while (i < rawChunk.length && visibleCount < breakVisibleLen) {
         val ch = rawChunk[i]
         if (ch == '\u001B') {
             val end =
@@ -640,7 +617,8 @@ private fun takeVisiblePreservingWords(text: String, limit: Int): String {
         visibleCount++
         i++
     }
-    return builder.toString().trimEnd()
+    val trimmed = builder.toString()
+    return if (breakVisibleLen == lastSpace) trimmed.trimEnd() else trimmed
 }
 
 private fun dropVisible(text: String, visible: Int): String {
@@ -689,6 +667,16 @@ private fun massageSpanMarker(record: ParsedLogRecord, msg: String): String {
     }
     return msg
 }
+
+private fun lastIndexOfAny(text: String, candidates: Set<Char>): Int {
+    for (i in text.length - 1 downTo 0) {
+        if (text[i] in candidates) return i
+    }
+    return -1
+}
+
+private val WRAP_SEPARATORS: Set<Char> = setOf('/', '?', '&', '=', '-', ':', '.')
+private const val MIN_WRAP_BREAK_VISIBLE = 8
 
 private fun buildLocationSuffix(file: String?, line: Int?, fn: String?): String? {
     if (file == null && line == null && fn == null) return null

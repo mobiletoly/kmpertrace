@@ -20,7 +20,7 @@ class LoggingBindingIsolationIosTest {
     @AfterTest
     fun tearDown() {
         KmperTrace.configure(minLevel = Level.DEBUG, sinks = emptyList())
-        sink.records.clear()
+        sink.clear()
     }
 
     @Test
@@ -33,8 +33,9 @@ class LoggingBindingIsolationIosTest {
 
         Log.d { "outside-span-log" }
 
-        val spanLog = sink.records.first { it.message == "span-log" }
-        val outsideLog = sink.records.first { it.message == "outside-span-log" }
+        val snapshot = sink.snapshot()
+        val spanLog = snapshot.first { it.message == "span-log" }
+        val outsideLog = snapshot.first { it.message == "outside-span-log" }
         val spanFields = parseStructuredSuffix(spanLog.structuredSuffix)
         val outsideFields = parseStructuredSuffix(outsideLog.structuredSuffix)
 
@@ -60,8 +61,9 @@ class LoggingBindingIsolationIosTest {
             b.await()
         }
 
-        val logA = sink.records.first { it.message == "from-A" }
-        val logB = sink.records.first { it.message == "from-B" }
+        val snapshot = sink.snapshot()
+        val logA = snapshot.first { it.message == "from-A" }
+        val logB = snapshot.first { it.message == "from-B" }
         val fieldsA = parseStructuredSuffix(logA.structuredSuffix)
         val fieldsB = parseStructuredSuffix(logB.structuredSuffix)
 

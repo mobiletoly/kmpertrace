@@ -365,4 +365,32 @@ class TreeCommandTest {
         assertTrue(rendered.contains("00:00:01.000 Api: line1"))
         assertTrue(rendered.contains("line2"))
     }
+
+    @Test
+    fun soft_wrap_prefers_breaking_on_separators_for_long_tokens() {
+        val longToken = "http://example.com/path/to/resource?userId=11111111-2222-3333-4444-555555555555&anotherParam=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        val lines = sequenceOf(
+            "t INFO Api |{ ts=2025-01-01T00:00:00Z lvl=info log=Api trace=trace-1 span=root parent=- kind=SPAN_START name=\"root\" dur=0 head=\"start\" }|",
+            "t INFO Api |{ ts=2025-01-01T00:00:01Z lvl=info log=Api trace=trace-1 span=root parent=- kind=LOG name=\"root\" dur=0 head=\"$longToken\" }|",
+            "t INFO Api |{ ts=2025-01-01T00:00:02Z lvl=info log=Api trace=trace-1 span=root parent=- kind=SPAN_END name=\"root\" dur=10 head=\"end\" }|"
+        )
+
+        val rendered =
+            renderTraces(
+                buildTraces(parseLines(lines)),
+                colorize = false,
+                timeFormat = TimeFormat.TIME_ONLY,
+                zoneId = ZoneOffset.UTC,
+                maxLineWidth = 60
+            )
+
+        // When wrapping long tokens (no spaces), we should avoid breaking *before* '-' so continuation
+        // lines don't start with "-...." (UUID-like fragments).
+        assertTrue(
+            rendered.lines().none { it.trimStart().startsWith("-") },
+            "expected wrapped lines not to start with '-':\n$rendered"
+        )
+        assertTrue(rendered.contains("http://example.com"), "expected URL to be present:\n$rendered")
+        assertTrue(rendered.contains("anotherParam="), "expected URL to be wrapped across lines:\n$rendered")
+    }
 }

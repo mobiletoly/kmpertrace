@@ -22,6 +22,9 @@ fun buildTraces(records: List<ParsedLogRecord>): List<TraceTree> {
                         builder.startTimestamp = record.timestamp
                     }
                 }
+                if (builder.spanKind == null && record.logRecordKind == LogRecordKind.SPAN_START) {
+                    builder.spanKind = record.rawFields["span_kind"]
+                }
                 if (builder.parentSpanId == null && record.parentSpanId != null) {
                     builder.parentSpanId = record.parentSpanId
                 }
@@ -33,8 +36,11 @@ fun buildTraces(records: List<ParsedLogRecord>): List<TraceTree> {
                 } else if (builder.durationMs == null && record.durationMs != null) {
                     builder.durationMs = record.durationMs
                 }
-                if (record.logRecordKind == LogRecordKind.SPAN_END) {
-                    builder.attributes = extractSpanAttributes(record.rawFields)
+                if (record.logRecordKind == LogRecordKind.SPAN_START || record.logRecordKind == LogRecordKind.SPAN_END) {
+                    val extracted = extractSpanAttributes(record.rawFields)
+                    if (extracted.isNotEmpty()) {
+                        builder.attributes = (builder.attributes + extracted).toSortedMap()
+                    }
                 }
                 if (builder.sourceComponent == null && record.sourceComponent != null) builder.sourceComponent = record.sourceComponent
                 if (builder.sourceOperation == null && record.sourceOperation != null) builder.sourceOperation = record.sourceOperation
@@ -55,6 +61,7 @@ fun buildTraces(records: List<ParsedLogRecord>): List<TraceTree> {
                     spanId = spanId,
                     parentSpanId = b.parentSpanId,
                     spanName = b.spanName ?: spanId,
+                    spanKind = b.spanKind,
                     durationMs = b.durationMs,
                     startTimestamp = b.startTimestamp,
                     sourceComponent = b.sourceComponent,
@@ -98,6 +105,7 @@ fun buildTraces(records: List<ParsedLogRecord>): List<TraceTree> {
 private data class SpanBuilder(
     var parentSpanId: String? = null,
     var spanName: String? = null,
+    var spanKind: String? = null,
     var durationMs: Long? = null,
     var sourceComponent: String? = null,
     var sourceOperation: String? = null,
@@ -115,6 +123,7 @@ private class MutableSpanNode(
     val spanId: String,
     val parentSpanId: String?,
     val spanName: String,
+    val spanKind: String?,
     val durationMs: Long?,
     val startTimestamp: String?,
     val sourceComponent: String?,
@@ -132,6 +141,7 @@ private class MutableSpanNode(
         spanId = spanId,
         parentSpanId = parentSpanId,
         spanName = spanName,
+        spanKind = spanKind,
         durationMs = durationMs,
         startTimestamp = startTimestamp,
         sourceComponent = sourceComponent,

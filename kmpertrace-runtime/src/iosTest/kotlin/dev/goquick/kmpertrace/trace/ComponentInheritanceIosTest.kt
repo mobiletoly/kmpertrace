@@ -14,7 +14,7 @@ class ComponentInheritanceIosTest {
     @AfterTest
     fun tearDown() {
         KmperTrace.configure(minLevel = Level.DEBUG, sinks = emptyList())
-        sink.records.clear()
+        sink.clear()
     }
 
     @Test
@@ -27,7 +27,7 @@ class ComponentInheritanceIosTest {
             }
         }
 
-        val fields = sink.records.map { parseStructuredSuffix(it.structuredSuffix) }
+        val fields = sink.snapshot().map { parseStructuredSuffix(it.structuredSuffix) }
         val childStart = fields.first { it["kind"] == "SPAN_START" && it["name"] == "FetchHttp" }
         val childLog = fields.first { it["kind"] == null && it["head"] == "inside child" }
 

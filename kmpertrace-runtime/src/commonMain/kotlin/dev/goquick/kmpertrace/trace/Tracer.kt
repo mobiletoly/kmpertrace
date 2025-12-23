@@ -10,6 +10,7 @@ import dev.goquick.kmpertrace.log.LoggerConfig
 import dev.goquick.kmpertrace.log.currentThreadNameOrNull
 import dev.goquick.kmpertrace.log.dispatchRecord
 import dev.goquick.kmpertrace.log.defaultLoggerName
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
@@ -115,7 +116,10 @@ object KmperTracer : Tracer {
             val result: T = try {
                 scope.block()
             } catch (t: Throwable) {
-                error = t
+                // Cancellation is a normal control-flow mechanism in coroutines; do not mark spans as ERROR.
+                if (t !is CancellationException) {
+                    error = t
+                }
                 throw t
             } finally {
                 emitSpanEnd(newContext, startInstant, error) // always close the span, even on error
@@ -208,6 +212,13 @@ fun <T> inlineSpan(
 private fun emitSpanStart(context: TraceContext, kind: SpanKind) {
     val now = Clock.System.now()
     val defaultMsg = defaultSpanMessage(LogRecordKind.SPAN_START, context.spanName)
+    val emittedSpanAttributes =
+        context.attributes
+            .filterKeys { key -> key.startsWith(ATTRIBUTE_PREFIX) || key.startsWith(DEBUG_ATTRIBUTE_PREFIX) }
+            .let { attrs ->
+                if (LoggerConfig.emitDebugAttributes) attrs
+                else attrs.filterKeys { key -> !key.startsWith(DEBUG_ATTRIBUTE_PREFIX) }
+            }
     val record = StructuredLogRecord(
         timestamp = now,
         level = Level.INFO,
@@ -229,6 +240,7 @@ private fun emitSpanStart(context: TraceContext, kind: SpanKind) {
             if (kind != SpanKind.INTERNAL) {
                 put("span_kind", kind.name.lowercase())
             }
+            putAll(emittedSpanAttributes)
         }
     )
     dispatchRecord(record)

@@ -7,6 +7,7 @@ data class SpanNode(
     val spanId: String,
     val parentSpanId: String?,
     val spanName: String,
+    val spanKind: String?,
     val durationMs: Long?,
     val startTimestamp: String?,
     val sourceComponent: String?,

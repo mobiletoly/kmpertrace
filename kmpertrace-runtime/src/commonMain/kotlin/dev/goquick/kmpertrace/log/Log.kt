@@ -4,10 +4,12 @@ import dev.goquick.kmpertrace.core.LogRecordKind
 import dev.goquick.kmpertrace.core.Level
 import dev.goquick.kmpertrace.core.StructuredLogRecord
 import dev.goquick.kmpertrace.core.TraceContext
+import dev.goquick.kmpertrace.core.SpanKind
 import dev.goquick.kmpertrace.trace.LoggingBinding
 import dev.goquick.kmpertrace.trace.LoggingBindingStorage
 import dev.goquick.kmpertrace.trace.TraceTrigger
 import dev.goquick.kmpertrace.trace.TraceContextStorage
+import dev.goquick.kmpertrace.trace.KmperTracer
 import dev.goquick.kmpertrace.trace.traceSpan
 import dev.goquick.kmpertrace.platform.renderLogLine
 import kotlin.time.Clock
@@ -150,8 +152,7 @@ suspend inline fun <T> LogContext.span(
  * If there is no active trace, this becomes a root span (new trace). If called from within an existing
  * trace/span, this becomes a child span in the same trace.
  *
- * The span records an `a:trigger` attribute and emits one INFO milestone log at the start so that UIs can
- * show the trigger even when span attributes are hidden.
+ * The span records an `a:trigger` attribute and uses [SpanKind.JOURNEY] so tooling can render this as a journey.
  */
 suspend inline fun <T> LogContext.journey(
     operation: String,
@@ -165,12 +166,15 @@ suspend inline fun <T> LogContext.journey(
             put("trigger", trigger.value)
         }
 
-    return traceSpan(
-        component = component ?: defaultLoggerName(),
-        operation = operation,
-        attributes = mergedAttributes
+    val componentName = component ?: defaultLoggerName()
+    return KmperTracer.span(
+        name = "$componentName.$operation",
+        kind = SpanKind.JOURNEY,
+        attributes = mergedAttributes,
+        sourceComponent = componentName,
+        sourceOperation = operation,
+        sourceLocationHint = "$componentName.$operation"
     ) {
-        this@journey.i { "journey started (trigger=${trigger.value})" }
         block()
     }
 }

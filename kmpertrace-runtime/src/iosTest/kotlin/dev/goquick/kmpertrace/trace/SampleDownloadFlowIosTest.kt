@@ -20,23 +20,16 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import dev.goquick.kmpertrace.testutil.parseStructuredSuffix
 
-private class SampleCollectingSink : LogSink {
-    val records = mutableListOf<LogRecord>()
-    override fun emit(record: LogRecord) {
-        records += record
-    }
-}
-
 /**
  * Mirrors the FakeDownloader + ProfileViewModel flow to reproduce iOS binding issues.
  */
 class SampleDownloadFlowIosTest {
-    private val sink = SampleCollectingSink()
+    private val sink = IosCollectingSink()
 
     @AfterTest
     fun tearDown() {
         KmperTrace.configure(minLevel = Level.DEBUG, sinks = emptyList())
-        sink.records.clear()
+        sink.clear()
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -60,14 +53,15 @@ class SampleDownloadFlowIosTest {
             }
         }
 
-        val fields = sink.records.map { parseStructuredSuffix(it.structuredSuffix) }
+        val snapshot = sink.snapshot()
+        val fields = snapshot.map { parseStructuredSuffix(it.structuredSuffix) }
         val aTraceId = fields.first { it["kind"] == "SPAN_START" && it["name"] == "Downloader.DownloadA" }["trace"]
         val bTraceId = fields.first { it["kind"] == "SPAN_START" && it["name"] == "Downloader.DownloadB" }["trace"]
         assertNotNull(aTraceId, "DownloadA trace id missing")
         assertNotNull(bTraceId, "DownloadB trace id missing")
         assertNotEquals(aTraceId, bTraceId, "Separate downloads should use different traces")
 
-        val downloaderLogs = sink.records.filter { it.tag == "Downloader" }
+        val downloaderLogs = snapshot.filter { it.tag == "Downloader" }
         assertNotEquals(0, downloaderLogs.size, "No downloader logs recorded")
         val downloaderLogsMissingContext = downloaderLogs.filter {
             val f = parseStructuredSuffix(it.structuredSuffix)
@@ -79,15 +73,15 @@ class SampleDownloadFlowIosTest {
             "Downloader logs lost trace/span binding: $downloaderLogsMissingContext"
         )
 
-        val aLogsWithoutTrace = sink.records
+        val aLogsWithoutTrace = snapshot
             .filter { parseStructuredSuffix(it.structuredSuffix)["src"] == "Downloader/DownloadA" }
             .filter { r ->
                 val f = parseStructuredSuffix(r.structuredSuffix)
                 f["trace"] == null || f["span"] == null
-            }
+        }
         assertEquals(0, aLogsWithoutTrace.size, "DownloadA logs lost trace/span binding: $aLogsWithoutTrace")
 
-        val bLogsWithoutTrace = sink.records
+        val bLogsWithoutTrace = snapshot
             .filter { parseStructuredSuffix(it.structuredSuffix)["src"] == "Downloader/DownloadB" }
             .filter { r ->
                 val f = parseStructuredSuffix(r.structuredSuffix)
