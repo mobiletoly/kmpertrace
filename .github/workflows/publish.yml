@@ -98,7 +98,7 @@ jobs:
 
           # Parse checksum anywhere in the file (Package.swift may be formatted onto a single line).
           EXPECTED_CHECKSUM=$(
-            perl -ne 'if (/checksum:\\s*\"([^\"]+)\"/) { print $1; exit }' Package.swift || true
+            perl -ne 'if (/checksum:\s*\"([^\"]+)\"/) { print $1; exit }' Package.swift || true
           )
 
           if [ -z "$EXPECTED_CHECKSUM" ]; then
