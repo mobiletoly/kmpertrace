@@ -71,6 +71,40 @@ jobs:
           set -euo pipefail
           ./gradlew :kmpertrace-runtime:assembleKmperTraceRuntimeReleaseXCFramework
 
+      - name: Normalize XCFramework archives and Info.plist
+        shell: bash
+        run: |
+          set -euo pipefail
+          XCFRAMEWORK_DIR="kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework"
+
+          find "$XCFRAMEWORK_DIR" -maxdepth 2 -type d -name "*.framework" -print0 | while IFS= read -r -d '' fw; do
+            lib="$fw/$(basename "$fw" .framework)"
+            if [ -f "$lib" ]; then
+              tmpdir="$(mktemp -d)"
+              (cd "$tmpdir" && ar -x "$lib")
+              rm -f "$lib"
+              rm -f "$tmpdir"/__.SYMDEF*
+              (cd "$tmpdir" && ZERO_AR_DATE=1 ar -rcs "$lib" *.o)
+              rm -rf "$tmpdir"
+            fi
+          done
+
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+
+          path = Path("kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework/Info.plist")
+          data = plistlib.load(path.open("rb"))
+          libs = data.get("AvailableLibraries")
+          if isinstance(libs, list):
+              data["AvailableLibraries"] = sorted(
+                  libs,
+                  key=lambda d: d.get("LibraryIdentifier", "")
+              )
+          with path.open("wb") as f:
+              plistlib.dump(data, f, sort_keys=True)
+          PY
+
       - name: Normalize XCFramework timestamps
         shell: bash
         run: |

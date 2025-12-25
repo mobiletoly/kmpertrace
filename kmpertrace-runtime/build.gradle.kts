@@ -102,6 +102,51 @@ tasks.register("prepareSpmRelease") {
 
         val zipFile = releaseDir.file("KmperTraceRuntime.xcframework.zip")
         zipFile.asFile.delete()
+        xcframeworkDir.asFile
+            .walkTopDown()
+            .filter { it.isDirectory && it.name.endsWith(".framework") }
+            .forEach { frameworkDir ->
+                val lib = frameworkDir.resolve(frameworkDir.name.removeSuffix(".framework"))
+                if (!lib.isFile) return@forEach
+                val tmpdir = kotlin.io.path.createTempDirectory("kmpertrace-ar-").toFile()
+                providers.exec {
+                    workingDir = tmpdir
+                    commandLine("ar", "-x", lib.absolutePath)
+                }.result.get()
+                tmpdir.listFiles { file -> file.name.startsWith("__.SYMDEF") }
+                    ?.forEach { it.delete() }
+                val objFiles = tmpdir.listFiles { file -> file.extension == "o" }
+                    ?.map { it.name }
+                    .orEmpty()
+                check(objFiles.isNotEmpty()) { "No object files extracted from ${lib.absolutePath}" }
+                lib.delete()
+                providers.exec {
+                    workingDir = tmpdir
+                    environment("ZERO_AR_DATE", "1")
+                    commandLine(listOf("ar", "-rcs", lib.absolutePath) + objFiles)
+                }.result.get()
+                tmpdir.deleteRecursively()
+            }
+        providers.exec {
+            commandLine(
+                "python3",
+                "-c",
+                """
+                import plistlib, pathlib, sys
+                path = pathlib.Path(sys.argv[1])
+                data = plistlib.load(path.open("rb"))
+                libs = data.get("AvailableLibraries")
+                if isinstance(libs, list):
+                    data["AvailableLibraries"] = sorted(
+                        libs,
+                        key=lambda d: d.get("LibraryIdentifier", "")
+                    )
+                with path.open("wb") as f:
+                    plistlib.dump(data, f, sort_keys=True)
+                """.trimIndent(),
+                xcframeworkDir.asFile.resolve("Info.plist").absolutePath
+            )
+        }.result.get()
         providers.exec {
             commandLine(
                 "find",
