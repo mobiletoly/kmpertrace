@@ -46,6 +46,12 @@ jobs:
           cd kmpertrace-runtime/build/XCFrameworks/release
           zip -r -X KmperTraceRuntime.xcframework.zip KmperTraceRuntime.xcframework
 
+      - name: Print XCFramework UUIDs
+        run: |
+          set -euo pipefail
+          dwarfdump --uuid kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework/ios-arm64/KmperTraceRuntime
+          dwarfdump --uuid kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework/ios-arm64_x86_64-simulator/KmperTraceRuntime
+
       - name: Compute SwiftPM checksum
         id: checksum
         run: |

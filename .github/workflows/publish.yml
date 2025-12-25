@@ -86,6 +86,20 @@ jobs:
           rm -f KmperTraceRuntime.xcframework.zip
           zip -r -X KmperTraceRuntime.xcframework.zip KmperTraceRuntime.xcframework
 
+      - name: Print XCFramework UUIDs
+        shell: bash
+        run: |
+          set -euo pipefail
+          dwarfdump --uuid kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework/ios-arm64/KmperTraceRuntime
+          dwarfdump --uuid kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework/ios-arm64_x86_64-simulator/KmperTraceRuntime
+
+      - name: Upload XCFramework zip (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KmperTraceRuntime.xcframework.publish
+          path: kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework.zip
+
       - name: Verify SwiftPM checksum matches Package.swift
         shell: bash
         run: |
