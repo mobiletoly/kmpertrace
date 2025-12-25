@@ -90,8 +90,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dwarfdump --uuid kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework/ios-arm64/KmperTraceRuntime
-          dwarfdump --uuid kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework/ios-arm64_x86_64-simulator/KmperTraceRuntime
+          XCFRAMEWORK_DIR="kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework"
+          find "$XCFRAMEWORK_DIR" -maxdepth 2 -type d -name "*.framework" -print0 | while IFS= read -r -d '' fw; do
+            bin="$fw/$(basename "$fw" .framework)"
+            echo "UUIDs for $bin"
+            if [ -f "$bin" ]; then
+              dwarfdump --uuid "$bin"
+            else
+              echo "Missing binary at $bin"
+            fi
+          done
 
       - name: Upload XCFramework zip (debug)
         if: always()
