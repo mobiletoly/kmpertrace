@@ -80,20 +80,6 @@ jobs:
           cd kmpertrace-runtime/build/XCFrameworks/release
           zip -r -X KmperTraceRuntime.xcframework.zip KmperTraceRuntime.xcframework
 
-      - name: Print XCFramework UUIDs
-        run: |
-          set -euo pipefail
-          XCFRAMEWORK_DIR="kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework"
-          find "$XCFRAMEWORK_DIR" -maxdepth 2 -type d -name "*.framework" -print0 | while IFS= read -r -d '' fw; do
-            bin="$fw/$(basename "$fw" .framework)"
-            echo "UUIDs for $bin"
-            if [ -f "$bin" ]; then
-              dwarfdump --uuid "$bin"
-            else
-              echo "Missing binary at $bin"
-            fi
-          done
-
       - name: Compute SwiftPM checksum
         id: checksum
         run: |
