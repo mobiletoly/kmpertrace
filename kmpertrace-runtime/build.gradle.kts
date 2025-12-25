@@ -103,8 +103,20 @@ tasks.register("prepareSpmRelease") {
         val zipFile = releaseDir.file("KmperTraceRuntime.xcframework.zip")
         zipFile.asFile.delete()
         providers.exec {
+            commandLine(
+                "find",
+                xcframeworkDir.asFile.absolutePath,
+                "-exec",
+                "touch",
+                "-t",
+                "198001010000",
+                "{}",
+                "+"
+            )
+        }.result.get()
+        providers.exec {
             workingDir = releaseDir.asFile
-            commandLine("zip", "-r", zipFile.asFile.name, xcframeworkDir.asFile.name)
+            commandLine("zip", "-r", "-X", zipFile.asFile.name, xcframeworkDir.asFile.name)
         }.result.get()
 
         val checksumOutput = ByteArrayOutputStream()

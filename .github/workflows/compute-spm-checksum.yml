@@ -35,6 +35,12 @@ jobs:
       - name: Build XCFramework (Release)
         run: ./gradlew :kmpertrace-runtime:assembleKmperTraceRuntimeReleaseXCFramework
 
+      - name: Normalize XCFramework timestamps
+        run: |
+          set -euo pipefail
+          XCFRAMEWORK_DIR="kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework"
+          find "$XCFRAMEWORK_DIR" -exec touch -t 198001010000 {} +
+
       - name: Zip XCFramework
         run: |
           cd kmpertrace-runtime/build/XCFrameworks/release
