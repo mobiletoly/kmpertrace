@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          XCFRAMEWORK_DIR="kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework"
+          XCFRAMEWORK_DIR="$(cd "kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework" && pwd)"
 
           find "$XCFRAMEWORK_DIR" -maxdepth 2 -type d -name "*.framework" -print0 | while IFS= read -r -d '' fw; do
             lib="$fw/$(basename "$fw" .framework)"
@@ -72,7 +72,7 @@ jobs:
       - name: Normalize XCFramework timestamps
         run: |
           set -euo pipefail
-          XCFRAMEWORK_DIR="kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework"
+          XCFRAMEWORK_DIR="$(cd "kmpertrace-runtime/build/XCFrameworks/release/KmperTraceRuntime.xcframework" && pwd)"
           find "$XCFRAMEWORK_DIR" -exec touch -t 198001010000 {} +
 
       - name: Zip XCFramework
