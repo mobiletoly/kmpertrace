@@ -2,6 +2,8 @@ import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 import java.io.ByteArrayOutputStream
+import java.io.FileFilter
+import java.nio.file.Files
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -108,14 +110,14 @@ tasks.register("prepareSpmRelease") {
             .forEach { frameworkDir ->
                 val lib = frameworkDir.resolve(frameworkDir.name.removeSuffix(".framework"))
                 if (!lib.isFile) return@forEach
-                val tmpdir = kotlin.io.path.createTempDirectory("kmpertrace-ar-").toFile()
+                val tmpdir = Files.createTempDirectory("kmpertrace-ar-").toFile()
                 providers.exec {
                     workingDir = tmpdir
                     commandLine("ar", "-x", lib.absolutePath)
                 }.result.get()
-                tmpdir.listFiles { file -> file.name.startsWith("__.SYMDEF") }
+                tmpdir.listFiles(FileFilter { file -> file.name.startsWith("__.SYMDEF") })
                     ?.forEach { it.delete() }
-                val objFiles = tmpdir.listFiles { file -> file.extension == "o" }
+                val objFiles = tmpdir.listFiles(FileFilter { file -> file.extension == "o" })
                     ?.map { it.name }
                     .orEmpty()
                 check(objFiles.isNotEmpty()) { "No object files extracted from ${lib.absolutePath}" }
@@ -123,7 +125,9 @@ tasks.register("prepareSpmRelease") {
                 providers.exec {
                     workingDir = tmpdir
                     environment("ZERO_AR_DATE", "1")
-                    commandLine(listOf("ar", "-rcs", lib.absolutePath) + objFiles)
+                    val command = mutableListOf("ar", "-rcs", lib.absolutePath)
+                    command.addAll(objFiles)
+                    commandLine(command)
                 }.result.get()
                 tmpdir.deleteRecursively()
             }
