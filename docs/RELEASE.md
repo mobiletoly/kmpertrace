@@ -11,8 +11,10 @@ This repo publishes:
 
 2) Compute SwiftPM checksum for the XCFramework zip
    - GitHub → Actions → **Compute SPM XCFramework checksum** → Run workflow.
-   - Run it on the commit that contains the version bump.
-   - CI builds the XCFramework, zips it, prints the checksum and suggested URL.
+   - Use workflow from: `main`.
+   - Fill the "Version hint (e.g. 0.1.6) — used only for logging a suggested URL" field with `<version>`.
+   - Run it on the commit that contains the version bump (create a temporary tag/branch if needed).
+   - CI builds the XCFramework, normalizes archives/Info.plist for deterministic output, zips it, and prints the checksum + suggested URL.
 
 3) Update `Package.swift`
    - From helper logs, copy checksum + suggested URL (`.../releases/download/v<version>/KmperTraceRuntime.xcframework.zip`).
@@ -25,11 +27,13 @@ This repo publishes:
 
 5) Create GitHub Release (manual)
    - In GitHub UI, create a release for tag `v<version>`.
+   - This release event triggers `publish.yml` and uploads the XCFramework zip to the release assets.
 
 6) What CI does on the release event
    - publish.yml:
      - Publishes Maven artifacts.
      - Builds the iOS XCFramework zip from the tag commit.
+     - Normalizes the static archives/Info.plist to keep the checksum stable across runs.
      - Verifies `swift package compute-checksum` on that zip matches `Package.swift`.
      - Uploads the zip to the GitHub Release.
      - Fails if checksum mismatches.
@@ -47,5 +51,7 @@ This repo publishes:
 - If checksum verification fails in publish.yml, update `Package.swift` and retag with a new version.
 - `Package.swift` must live in the repo root and be correct per tag; SwiftPM ignores Package.swift uploaded as a release asset.
 - `Package.swift` can be formatted either as multi-line or single-line; CI parses `checksum: "..."` anywhere in the file.
+- Do not use Actions artifact URLs in `Package.swift`; use the GitHub Release asset URL.
+- If you run publish.yml manually via workflow_dispatch, ensure the tag exists and set "Tag/branch to run against" to `v<version>`; the release upload step requires a tag context.
 - Avoid snapshot versions when tagging.
 - Deprecated Gradle warnings about `exec` are harmless but can be cleaned up later.
